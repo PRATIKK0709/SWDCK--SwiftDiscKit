@@ -6,6 +6,7 @@ This file lists Discord HTTP endpoints from the official docs and tracks SwiftDi
 - Source commit: `df79d92`
 - Extracted on: `2026-02-17`
 - Verified against current SwiftDiscKit implementation on: `2026-02-18`
+- Endpoint coverage audit refreshed on: `2026-02-18` (cross-checked with `Routes.swift` + `RESTClient.swift`)
 - Scope: all `<Route method="...">...</Route>` entries under `developers/**` excluding `developers/change-log.mdx`
 
 ## Summary
