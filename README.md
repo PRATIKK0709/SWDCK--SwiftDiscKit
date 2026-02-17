@@ -238,6 +238,11 @@ Slash commands:
 
 - `docs/discord-api-endpoint-coverage.md`
 
+## Security
+
+- `SECURITY.md` describes vulnerability reporting.
+- GitHub branch protection, required CI, and security analysis are configured at repository level.
+
 ## License
 
 MIT
