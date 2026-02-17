@@ -19,9 +19,17 @@ This repository currently implements:
   - `READY`
 - REST endpoints:
   - Send message
+  - Edit message
+  - Get message
+  - Get messages (history query)
+  - Bulk delete messages
   - Send Components V2 message
   - Send Components V2 message with file attachments (multipart upload)
   - Get channel
+  - Get guild
+  - Get guild member
+  - Get guild roles
+  - Get user
   - Delete message
   - Create slash command (global/guild)
   - Bulk overwrite slash commands (global/guild)
@@ -30,6 +38,7 @@ This repository currently implements:
   - Deferred response
   - Edit original interaction response
   - Followup interaction message
+  - Get/Edit/Delete followup interaction message
 - Modal submit decoding helpers:
   - Submitted component values
   - Submitted file IDs and resolved file metadata
@@ -91,8 +100,8 @@ export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 swift run DiscordKitBot
 ```
 
-By default, `Examples/Bot.swift` includes local hardcoded token/guild/channel values.  
-You can override them with environment variables:
+`Examples/Bot.swift` includes local default guild/channel IDs.  
+Set bot token through environment (or edit `LocalDefaults.token`):
 
 ```bash
 export BOT_TOKEN="..."
@@ -115,6 +124,7 @@ let bot = DiscordBot(
 bot.onReady { ready in ... }
 bot.onMessage { message in ... }
 bot.onInteraction { interaction in ... }
+try await bot.setPresence(status: .online, activity: DiscordActivity(name: "Serving", type: .playing))
 
 try await bot.start()
 await bot.stop()
@@ -125,6 +135,14 @@ await bot.stop()
 ```swift
 let sent = try await bot.sendMessage(to: channelId, content: "hello")
 let channel = try await bot.getChannel(channelId)
+let guild = try await bot.getGuild(guildId)
+let user = try await bot.getUser(userId)
+let member = try await bot.getGuildMember(guildId: guildId, userId: userId)
+let roles = try await bot.getGuildRoles(guildId)
+let fetched = try await bot.getMessage(channelId: channelId, messageId: sent.id)
+let history = try await bot.getMessages(channelId: channelId, query: MessageHistoryQuery(limit: 20))
+let edited = try await bot.editMessage(channelId: channelId, messageId: sent.id, content: "updated")
+try await bot.bulkDeleteMessages(channelId: channelId, messageIds: [sent.id])
 try await bot.deleteMessage(channelId: channelId, messageId: sent.id)
 ```
 
@@ -152,6 +170,9 @@ try await interaction.respond("Immediate response")
 try await interaction.defer_()
 try await interaction.editResponse("Edited response")
 _ = try await interaction.followUp("Followup")
+let followup = try await interaction.getFollowUp(messageId: "...")
+_ = try await interaction.editFollowUp(messageId: followup.id, content: "Edited followup")
+try await interaction.deleteFollowUp(messageId: followup.id)
 try await interaction.presentModal(
     customId: "upload_modal",
     title: "Upload Demo",
@@ -212,7 +233,16 @@ Text commands:
 
 - `!ping`
 - `!channel <channel_id>`
+- `!guild <guild_id>`
+- `!roles <guild_id>`
+- `!user <user_id>`
+- `!member <guild_id> <user_id>`
 - `!say <channel_id> <text>`
+- `!msgget <channel_id> <message_id>`
+- `!msghistory <channel_id> [limit]`
+- `!msgedit <channel_id> <message_id> <text>`
+- `!bulkdelete <channel_id> <id1,id2,...>`
+- `!status <online|idle|dnd|invisible> [activity]`
 - `!componentsv2`
 - `!delete-last`
 - `!register-single`
@@ -223,8 +253,18 @@ Slash commands:
 - `/singleping`
 - `/deferdemo`
 - `/channelinfo`
+- `/guildinfo`
+- `/roles`
+- `/userinfo`
+- `/memberinfo`
 - `/say`
+- `/message_get`
+- `/message_history`
+- `/message_edit`
+- `/bulk_delete`
 - `/delete_last`
+- `/followup_flow`
+- `/set_status`
 - `/componentsv2`
 - `/components_modal`
 

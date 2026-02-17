@@ -72,6 +72,25 @@ public struct MessageReference: Codable, Sendable {
     public let guildId: String?
 }
 
+public struct MessageHistoryQuery: Sendable {
+    public let around: String?
+    public let before: String?
+    public let after: String?
+    public let limit: Int?
+
+    public init(
+        around: String? = nil,
+        before: String? = nil,
+        after: String? = nil,
+        limit: Int? = nil
+    ) {
+        self.around = around
+        self.before = before
+        self.after = after
+        self.limit = limit
+    }
+}
+
 public struct Attachment: Codable, Sendable, Identifiable {
     public let id: String
     public let filename: String

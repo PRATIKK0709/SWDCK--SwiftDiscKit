@@ -15,12 +15,20 @@ enum Routes {
         "\(baseURL)/channels/\(channelId)/messages/\(messageId)"
     }
 
+    static func bulkDeleteMessages(_ channelId: String) -> String {
+        "\(baseURL)/channels/\(channelId)/messages/bulk-delete"
+    }
+
     static func guild(_ guildId: String) -> String {
         "\(baseURL)/guilds/\(guildId)"
     }
 
     static func guildMember(_ guildId: String, userId: String) -> String {
         "\(baseURL)/guilds/\(guildId)/members/\(userId)"
+    }
+
+    static func guildRoles(_ guildId: String) -> String {
+        "\(baseURL)/guilds/\(guildId)/roles"
     }
 
     static func globalCommands(_ applicationId: String) -> String {
@@ -45,6 +53,10 @@ enum Routes {
 
     static func followupMessage(_ applicationId: String, token: String) -> String {
         "\(baseURL)/webhooks/\(applicationId)/\(token)"
+    }
+
+    static func followupMessage(_ applicationId: String, token: String, messageId: String) -> String {
+        "\(baseURL)/webhooks/\(applicationId)/\(token)/messages/\(messageId)"
     }
 
     static let currentUser = "\(baseURL)/users/@me"

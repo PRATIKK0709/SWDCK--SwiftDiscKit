@@ -54,6 +54,9 @@ public final class RESTClient: Sendable {
         let routeKey = "\(method):\(url.path)"
 
         for attempt in 1...maxRetries {
+            if attempt > 1 {
+                logger.warning("Retrying \(method) \(url.path) (attempt \(attempt)/\(maxRetries))")
+            }
             await rateLimiter.waitIfNeeded(for: routeKey)
 
             let (data, response): (Data, URLResponse)
@@ -75,11 +78,17 @@ public final class RESTClient: Sendable {
 
             switch httpResponse.statusCode {
             case 200...299:
-                logger.debug("✓ \(method) \(urlString) → \(httpResponse.statusCode)")
+                logger.debug("✓ \(method) \(url.path) → \(httpResponse.statusCode)")
                 return data
 
             case 401:
                 throw DiscordError.invalidToken
+
+            case 403:
+                throw DiscordError.missingPermissions(endpoint: url.path)
+
+            case 404:
+                throw DiscordError.resourceNotFound(endpoint: url.path)
 
             case 429:
                 let retryResponse = try? JSONCoder.decode(RateLimitResponse.self, from: data)
@@ -90,6 +99,8 @@ public final class RESTClient: Sendable {
                     ?? headerBool("X-RateLimit-Global", from: httpResponse.allHeaderFields)
                     ?? false
 
+                logger.warning("Rate limited on \(method) \(url.path). Retry after \(retryAfter)s. Global=\(isGlobal)")
+
                 if isGlobal {
                     await rateLimiter.handleGlobalRateLimit(retryAfter: retryAfter)
                 } else {
@@ -99,13 +110,23 @@ public final class RESTClient: Sendable {
                 if attempt < maxRetries { continue }
                 throw DiscordError.rateLimited(retryAfter: retryAfter)
 
-            case 400...499:
+            case 400:
                 let bodyStr = String(data: data, encoding: .utf8) ?? "<binary>"
-                logger.error("HTTP \(httpResponse.statusCode) for \(method) \(urlString): \(bodyStr)")
+                logger.error("HTTP 400 for \(method) \(url.path): \(bodyStr)")
+                throw DiscordError.invalidRequest(message: apiErrorMessage(from: data) ?? bodyStr)
+
+            case 422:
+                let bodyStr = String(data: data, encoding: .utf8) ?? "<binary>"
+                logger.error("HTTP 422 for \(method) \(url.path): \(bodyStr)")
+                throw DiscordError.validationFailed(message: apiErrorMessage(from: data) ?? bodyStr)
+
+            case 401...499:
+                let bodyStr = String(data: data, encoding: .utf8) ?? "<binary>"
+                logger.error("HTTP \(httpResponse.statusCode) for \(method) \(url.path): \(bodyStr)")
                 throw DiscordError.httpError(statusCode: httpResponse.statusCode, body: bodyStr)
 
             case 500...599:
-                logger.warning("Server error \(httpResponse.statusCode), attempt \(attempt)/\(maxRetries)")
+                logger.warning("Server error \(httpResponse.statusCode) on \(method) \(url.path), attempt \(attempt)/\(maxRetries)")
                 if attempt < maxRetries {
                     try? await Task.sleep(nanoseconds: 1_000_000_000 * UInt64(attempt))
                     continue
@@ -127,9 +148,44 @@ public final class RESTClient: Sendable {
         try await request(method: "GET", url: Routes.currentUser, decodeAs: DiscordUser.self)
     }
 
+    func getUser(userId: String) async throws -> DiscordUser {
+        try await request(method: "GET", url: Routes.user(userId), decodeAs: DiscordUser.self)
+    }
+
 
     func getChannel(channelId: String) async throws -> Channel {
         try await request(method: "GET", url: Routes.channel(channelId), decodeAs: Channel.self)
+    }
+
+    func getGuild(guildId: String) async throws -> Guild {
+        try await request(method: "GET", url: Routes.guild(guildId), decodeAs: Guild.self)
+    }
+
+    func getGuildMember(guildId: String, userId: String) async throws -> GuildMember {
+        try await request(method: "GET", url: Routes.guildMember(guildId, userId: userId), decodeAs: GuildMember.self)
+    }
+
+    func getGuildRoles(guildId: String) async throws -> [GuildRole] {
+        try await request(method: "GET", url: Routes.guildRoles(guildId), decodeAs: [GuildRole].self)
+    }
+
+    func getMessage(channelId: String, messageId: String) async throws -> Message {
+        var message = try await request(
+            method: "GET",
+            url: Routes.message(channelId, messageId: messageId),
+            decodeAs: Message.self
+        )
+        message._rest = self
+        return message
+    }
+
+    func getMessages(channelId: String, query: MessageHistoryQuery = MessageHistoryQuery()) async throws -> [Message] {
+        let url = buildMessageHistoryURL(channelId: channelId, query: query)
+        var messages = try await request(method: "GET", url: url, decodeAs: [Message].self)
+        for index in messages.indices {
+            messages[index]._rest = self
+        }
+        return messages
     }
 
 
@@ -143,6 +199,25 @@ public final class RESTClient: Sendable {
         var msg = try await request(method: "POST", url: Routes.messages(channelId), body: body, decodeAs: Message.self)
         msg._rest = self
         return msg
+    }
+
+    @discardableResult
+    func editMessage(channelId: String, messageId: String, content: String) async throws -> Message {
+        let body = EditMessageBody(content: content)
+        var message = try await request(
+            method: "PATCH",
+            url: Routes.message(channelId, messageId: messageId),
+            body: body,
+            decodeAs: Message.self
+        )
+        message._rest = self
+        return message
+    }
+
+    func bulkDeleteMessages(channelId: String, messageIds: [String]) async throws {
+        guard !messageIds.isEmpty else { return }
+        let body = BulkDeleteMessagesBody(messages: messageIds)
+        try await requestVoid(method: "POST", url: Routes.bulkDeleteMessages(channelId), body: body)
     }
 
     @discardableResult
@@ -371,15 +446,79 @@ public final class RESTClient: Sendable {
         msg._rest = self
         return msg
     }
+
+    @discardableResult
+    func getFollowupMessage(
+        applicationId: String,
+        token: String,
+        messageId: String
+    ) async throws -> Message {
+        var msg = try await request(
+            method: "GET",
+            url: Routes.followupMessage(applicationId, token: token, messageId: messageId),
+            decodeAs: Message.self
+        )
+        msg._rest = self
+        return msg
+    }
+
+    @discardableResult
+    func editFollowupMessage(
+        applicationId: String,
+        token: String,
+        messageId: String,
+        content: String
+    ) async throws -> Message {
+        let body = EditMessageBody(content: content)
+        var msg = try await request(
+            method: "PATCH",
+            url: Routes.followupMessage(applicationId, token: token, messageId: messageId),
+            body: body,
+            decodeAs: Message.self
+        )
+        msg._rest = self
+        return msg
+    }
+
+    func deleteFollowupMessage(
+        applicationId: String,
+        token: String,
+        messageId: String
+    ) async throws {
+        try await requestVoid(
+            method: "DELETE",
+            url: Routes.followupMessage(applicationId, token: token, messageId: messageId)
+        )
+    }
 }
 
 private extension RESTClient {
+    func buildMessageHistoryURL(channelId: String, query: MessageHistoryQuery) -> String {
+        guard var components = URLComponents(string: Routes.messages(channelId)) else {
+            return Routes.messages(channelId)
+        }
+
+        var items: [URLQueryItem] = []
+        if let around = query.around { items.append(URLQueryItem(name: "around", value: around)) }
+        if let before = query.before { items.append(URLQueryItem(name: "before", value: before)) }
+        if let after = query.after { items.append(URLQueryItem(name: "after", value: after)) }
+        if let limit = query.limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+
+        components.queryItems = items.isEmpty ? nil : items
+        return components.url?.absoluteString ?? Routes.messages(channelId)
+    }
+
     func headerValue(_ name: String, from headers: [AnyHashable: Any]) -> String? {
         let lowercasedName = name.lowercased()
         for (key, value) in headers where String(describing: key).lowercased() == lowercasedName {
             return String(describing: value)
         }
         return nil
+    }
+
+    func apiErrorMessage(from data: Data) -> String? {
+        let payload = try? JSONCoder.decode(DiscordAPIErrorPayload.self, from: data)
+        return payload?.message
     }
 
     func headerDouble(_ name: String, from headers: [AnyHashable: Any]) -> Double? {
@@ -454,6 +593,14 @@ private struct EditInteractionBody: Encodable {
     let content: String
 }
 
+private struct EditMessageBody: Encodable {
+    let content: String
+}
+
+private struct BulkDeleteMessagesBody: Encodable {
+    let messages: [String]
+}
+
 private struct FollowupBody: Encodable {
     let content: String
     let flags: Int?
@@ -463,6 +610,10 @@ private struct RateLimitResponse: Decodable {
     let message: String
     let retryAfter: Double
     let global: Bool
+}
+
+private struct DiscordAPIErrorPayload: Decodable {
+    let message: String?
 }
 
 

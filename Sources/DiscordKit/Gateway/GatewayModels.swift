@@ -83,6 +83,11 @@ struct ResumePayload: Encodable {
     }
 }
 
+struct PresenceUpdatePayload: Encodable {
+    let op: Int = GatewayOpcode.presenceUpdate.rawValue
+    let d: DiscordPresenceUpdate
+}
+
 
 struct HelloData: Decodable {
     let heartbeatInterval: Int
@@ -99,6 +104,51 @@ public struct ReadyData: Decodable, Sendable {
 public struct ReadyApplication: Decodable, Sendable {
     public let id: String
     public let flags: Int?
+}
+
+public enum DiscordPresenceStatus: String, Codable, Sendable {
+    case online
+    case idle
+    case dnd
+    case invisible
+}
+
+public enum DiscordActivityType: Int, Codable, Sendable {
+    case playing = 0
+    case streaming = 1
+    case listening = 2
+    case watching = 3
+    case custom = 4
+    case competing = 5
+}
+
+public struct DiscordActivity: Codable, Sendable {
+    public let name: String
+    public let type: DiscordActivityType
+
+    public init(name: String, type: DiscordActivityType = .playing) {
+        self.name = name
+        self.type = type
+    }
+}
+
+public struct DiscordPresenceUpdate: Codable, Sendable {
+    public let since: Int?
+    public let activities: [DiscordActivity]
+    public let status: DiscordPresenceStatus
+    public let afk: Bool
+
+    public init(
+        since: Int? = nil,
+        activities: [DiscordActivity] = [],
+        status: DiscordPresenceStatus,
+        afk: Bool = false
+    ) {
+        self.since = since
+        self.activities = activities
+        self.status = status
+        self.afk = afk
+    }
 }
 
 

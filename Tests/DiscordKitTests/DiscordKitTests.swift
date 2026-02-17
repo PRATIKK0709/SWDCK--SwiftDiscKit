@@ -121,6 +121,10 @@ final class DiscordErrorTests: XCTestCase {
         XCTAssertTrue(DiscordError.rateLimited(retryAfter: 5.0).errorDescription!.contains("5.0"))
         XCTAssertTrue(DiscordError.gatewayDisconnected(code: 4004, reason: "Authentication failed").errorDescription!.contains("4004"))
         XCTAssertTrue(DiscordError.httpError(statusCode: 404, body: "Not Found").errorDescription!.contains("404"))
+        XCTAssertTrue(DiscordError.missingPermissions(endpoint: "/channels/1/messages").errorDescription!.contains("Missing permissions"))
+        XCTAssertTrue(DiscordError.resourceNotFound(endpoint: "/channels/1/messages/2").errorDescription!.contains("not found"))
+        XCTAssertTrue(DiscordError.validationFailed(message: "invalid form body").errorDescription!.contains("rejected"))
+        XCTAssertTrue(DiscordError.invalidRequest(message: "bad request").errorDescription!.contains("Invalid"))
     }
 }
 
@@ -480,5 +484,71 @@ final class ComponentV2Tests: XCTestCase {
 
         let checkbox = json?.last?["component"] as? [String: Any]
         XCTAssertEqual(checkbox?["type"] as? Int, DiscordComponentType.checkbox.rawValue)
+    }
+}
+
+final class GatewayPresenceTests: XCTestCase {
+
+    func testPresencePayloadEncoding() throws {
+        let payload = PresenceUpdatePayload(
+            d: DiscordPresenceUpdate(
+                activities: [DiscordActivity(name: "Testing", type: .playing)],
+                status: .online,
+                afk: false
+            )
+        )
+
+        let data = try JSONCoder.encode(payload)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        XCTAssertEqual(json?["op"] as? Int, 3)
+
+        let d = json?["d"] as? [String: Any]
+        XCTAssertEqual(d?["status"] as? String, "online")
+        XCTAssertEqual(d?["afk"] as? Bool, false)
+        let activities = d?["activities"] as? [[String: Any]]
+        XCTAssertEqual(activities?.first?["name"] as? String, "Testing")
+        XCTAssertEqual(activities?.first?["type"] as? Int, 0)
+    }
+}
+
+final class RouteCoverageTests: XCTestCase {
+    func testNewRoutes() {
+        XCTAssertEqual(
+            Routes.bulkDeleteMessages("123"),
+            "\(Routes.baseURL)/channels/123/messages/bulk-delete"
+        )
+        XCTAssertEqual(
+            Routes.guildRoles("456"),
+            "\(Routes.baseURL)/guilds/456/roles"
+        )
+        XCTAssertEqual(
+            Routes.followupMessage("app", token: "tok", messageId: "msg"),
+            "\(Routes.baseURL)/webhooks/app/tok/messages/msg"
+        )
+    }
+}
+
+final class GuildRoleModelTests: XCTestCase {
+    func testGuildRoleDecoding() throws {
+        let json = """
+        {
+          "id": "1",
+          "name": "Admin",
+          "color": 16711680,
+          "hoist": true,
+          "icon": null,
+          "unicode_emoji": null,
+          "position": 3,
+          "permissions": "8",
+          "managed": false,
+          "mentionable": true
+        }
+        """.data(using: .utf8)!
+
+        let role = try JSONCoder.decode(GuildRole.self, from: json)
+        XCTAssertEqual(role.id, "1")
+        XCTAssertEqual(role.name, "Admin")
+        XCTAssertEqual(role.permissions, "8")
+        XCTAssertEqual(role.position, 3)
     }
 }
