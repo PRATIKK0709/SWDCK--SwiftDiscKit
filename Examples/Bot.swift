@@ -3,8 +3,15 @@ import DiscordKit
 
 private enum LocalDefaults {
     static let token = "SET_BOT_TOKEN"
-    static let guildId = "1469915389537550357"
-    static let channelId = "1473037288656081027"
+    static let guildId = "SET_TEST_GUILD_ID"
+    static let channelId = "SET_TEST_CHANNEL_ID"
+    static let roleId = "SET_TEST_ROLE_ID"
+}
+
+private enum DemoImageURLs {
+    static let swift25 = "https://img.icons8.com/?size=512&id=24465&format=png&color=53B848"
+    static let swiftOrange = "https://img.icons8.com/?size=512&id=24465&format=png&color=53B848"
+    static let swiftGreen = "https://img.icons8.com/?size=512&id=24465&format=png&color=53B848"
 }
 
 actor DemoState {
@@ -43,15 +50,49 @@ actor DemoState {
     }
 }
 
+private enum DotEnv {
+    static func load(from path: String = ".env") -> [String: String] {
+        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return [:]
+        }
+
+        var values: [String: String] = [:]
+        for rawLine in content.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+            guard let separatorIndex = line.firstIndex(of: "=") else { continue }
+
+            let key = line[..<separatorIndex].trimmingCharacters(in: .whitespaces)
+            var value = line[line.index(after: separatorIndex)...].trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
+                value.removeFirst()
+                value.removeLast()
+            }
+            values[key] = value
+        }
+        return values
+    }
+}
+
 @main
 struct DiscordKitBotMain {
     static func main() async throws {
-        let token = ProcessInfo.processInfo.environment["BOT_TOKEN"]?.nonEmpty ?? LocalDefaults.token
+        let dotenv = DotEnv.load()
+        let token = ProcessInfo.processInfo.environment["BOT_TOKEN"]?.nonEmpty
+            ?? dotenv["BOT_TOKEN"]?.nonEmpty
+            ?? LocalDefaults.token
         guard token != LocalDefaults.token else {
-            fatalError("Set BOT_TOKEN environment variable or update LocalDefaults.token in Examples/Bot.swift")
+            fatalError("Set BOT_TOKEN in shell environment or .env")
         }
-        let testChannelId = ProcessInfo.processInfo.environment["TEST_CHANNEL_ID"]?.nonEmpty ?? LocalDefaults.channelId
-        let testGuildId = ProcessInfo.processInfo.environment["TEST_GUILD_ID"]?.nonEmpty ?? LocalDefaults.guildId
+        let testChannelId = ProcessInfo.processInfo.environment["TEST_CHANNEL_ID"]?.nonEmpty
+            ?? dotenv["TEST_CHANNEL_ID"]?.nonEmpty
+            ?? LocalDefaults.channelId
+        let testGuildId = ProcessInfo.processInfo.environment["TEST_GUILD_ID"]?.nonEmpty
+            ?? dotenv["TEST_GUILD_ID"]?.nonEmpty
+            ?? LocalDefaults.guildId
+        let testRoleId = ProcessInfo.processInfo.environment["TEST_ROLE_ID"]?.nonEmpty
+            ?? dotenv["TEST_ROLE_ID"]?.nonEmpty
+            ?? (LocalDefaults.roleId == "SET_TEST_ROLE_ID" ? nil : LocalDefaults.roleId)
 
         let bot = DiscordBot(
             token: token,
@@ -136,7 +177,21 @@ struct DiscordKitBotMain {
                 let selectedValues = interaction.data?.values?.joined(separator: ", ") ?? "none"
 
                 do {
-                    if customId.hasPrefix("cv2_btn_") {
+                    if customId == "api_test_select" {
+                        guard let selected = interaction.data?.values?.first else {
+                            try await interaction.respond("No test selected.", ephemeral: true)
+                            return
+                        }
+                        try await interaction.defer_(ephemeral: true)
+                        try await runPanelTest(
+                            selected,
+                            bot: bot,
+                            interaction: interaction,
+                            testGuildId: testGuildId,
+                            testChannelId: testChannelId,
+                            testRoleId: testRoleId
+                        )
+                    } else if customId.hasPrefix("cv2_btn_") {
                         try await interaction.respond("Button interaction: \(customId)", ephemeral: true)
                     } else if customId.hasPrefix("cv2_select_") {
                         try await interaction.respond("Selection for \(customId): \(selectedValues)", ephemeral: true)
@@ -160,6 +215,7 @@ struct DiscordKitBotMain {
                 let help = """
                 Text commands:
                 !ping
+                !panel
                 !channel <channel_id>
                 !guild <guild_id>
                 !roles <guild_id>
@@ -179,6 +235,17 @@ struct DiscordKitBotMain {
                 return
             }
 
+            if content == "!panel" {
+                let panel = apiTestPanelData()
+                let sent = try await bot.sendComponentsV2Message(
+                    to: message.channelId,
+                    components: panel
+                )
+                await state.setLastBotMessage(sent)
+                try await message.reply("API test panel sent. Use the select menu to run endpoint tests.")
+                return
+            }
+
             if content.hasPrefix("!channel ") {
                 let channelId = String(content.dropFirst("!channel ".count)).trimmingCharacters(in: .whitespaces)
                 guard !channelId.isEmpty else {
@@ -187,7 +254,7 @@ struct DiscordKitBotMain {
                 }
                 do {
                     let channel = try await bot.getChannel(channelId)
-                    try await message.reply("Channel id=\(channel.id), type=\(channel.type.rawValue), name=\(channel.name ?? "nil")")
+                    try await sendMessageDump(message, title: "getChannel", value: channel)
                 } catch {
                     try await message.reply("getChannel failed: \(friendlyError(error))")
                 }
@@ -202,7 +269,7 @@ struct DiscordKitBotMain {
                 }
                 do {
                     let guild = try await bot.getGuild(guildId)
-                    try await message.reply("Guild id=\(guild.id), name=\(guild.name), locale=\(guild.preferredLocale)")
+                    try await sendMessageDump(message, title: "getGuild", value: guild)
                 } catch {
                     try await message.reply("getGuild failed: \(friendlyError(error))")
                 }
@@ -217,8 +284,11 @@ struct DiscordKitBotMain {
                 }
                 do {
                     let roles = try await bot.getGuildRoles(guildId)
-                    let preview = roles.prefix(10).map(\.name).joined(separator: ", ")
-                    try await message.reply("Roles count=\(roles.count). Sample: \(preview)")
+                    try await sendMessageDump(
+                        message,
+                        title: "getGuildRoles",
+                        value: EndpointCollectionDump(count: roles.count, items: roles)
+                    )
                 } catch {
                     try await message.reply("getGuildRoles failed: \(friendlyError(error))")
                 }
@@ -233,7 +303,7 @@ struct DiscordKitBotMain {
                 }
                 do {
                     let user = try await bot.getUser(userId)
-                    try await message.reply("User id=\(user.id), username=\(user.username), display=\(user.displayName)")
+                    try await sendMessageDump(message, title: "getUser", value: user)
                 } catch {
                     try await message.reply("getUser failed: \(friendlyError(error))")
                 }
@@ -250,7 +320,7 @@ struct DiscordKitBotMain {
                 let userId = String(parts[2])
                 do {
                     let member = try await bot.getGuildMember(guildId: guildId, userId: userId)
-                    try await message.reply("Member display=\(member.displayName), roleCount=\(member.roles.count)")
+                    try await sendMessageDump(message, title: "getGuildMember", value: member)
                 } catch {
                     try await message.reply("getGuildMember failed: \(friendlyError(error))")
                 }
@@ -268,7 +338,7 @@ struct DiscordKitBotMain {
                 do {
                     let sent = try await bot.sendMessage(to: targetChannelId, content: text)
                     await state.setLastBotMessage(sent)
-                    try await message.reply("Sent message id \(sent.id) to \(targetChannelId)")
+                    try await sendMessageDump(message, title: "sendMessage", value: sent)
                 } catch {
                     try await message.reply("sendMessage failed: \(friendlyError(error))")
                 }
@@ -285,7 +355,7 @@ struct DiscordKitBotMain {
                 let messageId = String(parts[2])
                 do {
                     let fetched = try await bot.getMessage(channelId: channelId, messageId: messageId)
-                    try await message.reply("Fetched message id=\(fetched.id), author=\(fetched.author.tag), content=\(fetched.content)")
+                    try await sendMessageDump(message, title: "getMessage", value: fetched)
                 } catch {
                     try await message.reply("getMessage failed: \(friendlyError(error))")
                 }
@@ -306,11 +376,11 @@ struct DiscordKitBotMain {
                         channelId: channelId,
                         query: MessageHistoryQuery(limit: safeLimit)
                     )
-                    if let first = messages.first {
-                        try await message.reply("Fetched \(messages.count) messages. Latest id=\(first.id), content=\(first.content)")
-                    } else {
-                        try await message.reply("No messages returned.")
-                    }
+                    try await sendMessageDump(
+                        message,
+                        title: "getMessages",
+                        value: EndpointCollectionDump(count: messages.count, items: messages)
+                    )
                 } catch {
                     try await message.reply("getMessages failed: \(friendlyError(error))")
                 }
@@ -328,7 +398,7 @@ struct DiscordKitBotMain {
                 let newText = String(parts[3])
                 do {
                     let edited = try await bot.editMessage(channelId: channelId, messageId: messageId, content: newText)
-                    try await message.reply("Edited message \(edited.id). New content: \(edited.content)")
+                    try await sendMessageDump(message, title: "editMessage", value: edited)
                 } catch {
                     try await message.reply("editMessage failed: \(friendlyError(error))")
                 }
@@ -349,7 +419,11 @@ struct DiscordKitBotMain {
                 }
                 do {
                     try await bot.bulkDeleteMessages(channelId: channelId, messageIds: ids)
-                    try await message.reply("Bulk delete requested for \(ids.count) message(s).")
+                    try await sendMessageDump(
+                        message,
+                        title: "bulkDeleteMessages",
+                        value: BulkDeleteResult(channelId: channelId, messageIds: ids)
+                    )
                 } catch {
                     try await message.reply("bulkDeleteMessages failed: \(friendlyError(error))")
                 }
@@ -369,7 +443,11 @@ struct DiscordKitBotMain {
                 let activity = parts.count == 3 ? DiscordActivity(name: String(parts[2]), type: .playing) : nil
                 do {
                     try await bot.setPresence(status: status, activity: activity)
-                    try await message.reply("Presence updated to \(status.rawValue).")
+                    try await sendMessageDump(
+                        message,
+                        title: "setPresence",
+                        value: PresenceUpdateResult(status: status.rawValue, activityName: activity?.name)
+                    )
                 } catch {
                     try await message.reply("setPresence failed: \(friendlyError(error))")
                 }
@@ -384,7 +462,11 @@ struct DiscordKitBotMain {
                 do {
                     try await bot.deleteMessage(channelId: last.channelId, messageId: last.id)
                     await state.clearLastBotMessage()
-                    try await message.reply("Deleted message \(last.id).")
+                    try await sendMessageDump(
+                        message,
+                        title: "deleteMessage",
+                        value: DeleteMessageResult(channelId: last.channelId, messageId: last.id)
+                    )
                 } catch {
                     try await message.reply("deleteMessage failed: \(friendlyError(error))")
                 }
@@ -414,283 +496,15 @@ struct DiscordKitBotMain {
                         description: "Single create-command endpoint test",
                         guildId: testGuildId
                     )
-                    try await message.reply("Created /\(command.name) with id \(command.id)")
+                    try await sendMessageDump(message, title: "createSlashCommand", value: command)
                 } catch {
                     try await message.reply("createSlashCommand failed: \(friendlyError(error))")
                 }
             }
         }
 
-        bot.slashCommand("ping", description: "Test interaction respond endpoint") { interaction in
+        bot.slashCommand("ping", description: "Ping command") { interaction in
             try await interaction.respond("Pong!")
-        }
-
-        bot.slashCommand("singleping", description: "Direct ping handler for single command test") { interaction in
-            try await interaction.respond("singleping works.")
-        }
-
-        bot.slashCommand("deferdemo", description: "Test deferred + edit + followup endpoints") { interaction in
-            try await interaction.defer_()
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-            try await interaction.editResponse("Deferred response edited successfully.")
-            let followup = try await interaction.followUp("Follow-up message sent.")
-            await state.setLastFollowupMessage(followup)
-        }
-
-        bot.slashCommand(
-            "channelinfo",
-            description: "Test getChannel REST endpoint",
-            options: [
-                .string("channel_id", description: "Channel ID", required: true)
-            ]
-        ) { interaction in
-            guard let channelId = interaction.option("channel_id")?.stringValue else {
-                try await interaction.respond("Missing channel_id", ephemeral: true)
-                return
-            }
-
-            do {
-                let channel = try await bot.getChannel(channelId)
-                try await interaction.respond("Channel id=\(channel.id), type=\(channel.type.rawValue), name=\(channel.name ?? "nil")")
-            } catch {
-                try await interaction.respond("getChannel failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand(
-            "guildinfo",
-            description: "Test getGuild REST endpoint",
-            options: [
-                .string("guild_id", description: "Guild ID", required: true)
-            ]
-        ) { interaction in
-            guard let guildId = interaction.option("guild_id")?.stringValue else {
-                try await interaction.respond("Missing guild_id", ephemeral: true)
-                return
-            }
-            do {
-                let guild = try await bot.getGuild(guildId)
-                try await interaction.respond("Guild id=\(guild.id), name=\(guild.name), locale=\(guild.preferredLocale)")
-            } catch {
-                try await interaction.respond("getGuild failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand(
-            "roles",
-            description: "Test getGuildRoles REST endpoint",
-            options: [
-                .string("guild_id", description: "Guild ID", required: true)
-            ]
-        ) { interaction in
-            guard let guildId = interaction.option("guild_id")?.stringValue else {
-                try await interaction.respond("Missing guild_id", ephemeral: true)
-                return
-            }
-            do {
-                let roles = try await bot.getGuildRoles(guildId)
-                let preview = roles.prefix(10).map(\.name).joined(separator: ", ")
-                try await interaction.respond("Roles count=\(roles.count). Sample: \(preview)")
-            } catch {
-                try await interaction.respond("getGuildRoles failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand(
-            "userinfo",
-            description: "Test getUser REST endpoint",
-            options: [
-                .string("user_id", description: "User ID", required: true)
-            ]
-        ) { interaction in
-            guard let userId = interaction.option("user_id")?.stringValue else {
-                try await interaction.respond("Missing user_id", ephemeral: true)
-                return
-            }
-            do {
-                let user = try await bot.getUser(userId)
-                try await interaction.respond("User id=\(user.id), username=\(user.username), display=\(user.displayName)")
-            } catch {
-                try await interaction.respond("getUser failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand(
-            "memberinfo",
-            description: "Test getGuildMember REST endpoint",
-            options: [
-                .string("guild_id", description: "Guild ID", required: true),
-                .string("user_id", description: "User ID", required: true)
-            ]
-        ) { interaction in
-            guard let guildId = interaction.option("guild_id")?.stringValue,
-                  let userId = interaction.option("user_id")?.stringValue else {
-                try await interaction.respond("Missing arguments", ephemeral: true)
-                return
-            }
-            do {
-                let member = try await bot.getGuildMember(guildId: guildId, userId: userId)
-                try await interaction.respond("Member display=\(member.displayName), roleCount=\(member.roles.count)")
-            } catch {
-                try await interaction.respond("getGuildMember failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand(
-            "say",
-            description: "Test sendMessage REST endpoint",
-            options: [
-                .string("channel_id", description: "Target channel ID", required: true),
-                .string("text", description: "Message text", required: true)
-            ]
-        ) { interaction in
-            guard let channelId = interaction.option("channel_id")?.stringValue,
-                  let text = interaction.option("text")?.stringValue else {
-                try await interaction.respond("Missing arguments", ephemeral: true)
-                return
-            }
-
-            do {
-                let sent = try await bot.sendMessage(to: channelId, content: text)
-                await state.setLastBotMessage(sent)
-                try await interaction.respond("Sent message id \(sent.id)")
-            } catch {
-                try await interaction.respond("sendMessage failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand(
-            "message_get",
-            description: "Test getMessage endpoint",
-            options: [
-                .string("channel_id", description: "Channel ID", required: true),
-                .string("message_id", description: "Message ID", required: true)
-            ]
-        ) { interaction in
-            guard let channelId = interaction.option("channel_id")?.stringValue,
-                  let messageId = interaction.option("message_id")?.stringValue else {
-                try await interaction.respond("Missing arguments", ephemeral: true)
-                return
-            }
-            do {
-                let fetched = try await bot.getMessage(channelId: channelId, messageId: messageId)
-                try await interaction.respond("Fetched id=\(fetched.id), author=\(fetched.author.tag), content=\(fetched.content)")
-            } catch {
-                try await interaction.respond("getMessage failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand(
-            "message_history",
-            description: "Test getMessages endpoint",
-            options: [
-                .string("channel_id", description: "Channel ID", required: true),
-                .integer("limit", description: "1-100", required: false)
-            ]
-        ) { interaction in
-            guard let channelId = interaction.option("channel_id")?.stringValue else {
-                try await interaction.respond("Missing channel_id", ephemeral: true)
-                return
-            }
-            let requestedLimit = interaction.option("limit")?.intValue ?? 10
-            let safeLimit = min(max(requestedLimit, 1), 100)
-            do {
-                let messages = try await bot.getMessages(
-                    channelId: channelId,
-                    query: MessageHistoryQuery(limit: safeLimit)
-                )
-                if let first = messages.first {
-                    try await interaction.respond("Fetched \(messages.count) messages. Latest id=\(first.id)")
-                } else {
-                    try await interaction.respond("No messages returned.")
-                }
-            } catch {
-                try await interaction.respond("getMessages failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand(
-            "message_edit",
-            description: "Test editMessage endpoint",
-            options: [
-                .string("channel_id", description: "Channel ID", required: true),
-                .string("message_id", description: "Message ID", required: true),
-                .string("text", description: "New content", required: true)
-            ]
-        ) { interaction in
-            guard let channelId = interaction.option("channel_id")?.stringValue,
-                  let messageId = interaction.option("message_id")?.stringValue,
-                  let text = interaction.option("text")?.stringValue else {
-                try await interaction.respond("Missing arguments", ephemeral: true)
-                return
-            }
-            do {
-                let edited = try await bot.editMessage(channelId: channelId, messageId: messageId, content: text)
-                try await interaction.respond("Edited message \(edited.id).")
-            } catch {
-                try await interaction.respond("editMessage failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand(
-            "bulk_delete",
-            description: "Test bulkDeleteMessages endpoint",
-            options: [
-                .string("channel_id", description: "Channel ID", required: true),
-                .string("message_ids", description: "Comma separated IDs", required: true)
-            ]
-        ) { interaction in
-            guard let channelId = interaction.option("channel_id")?.stringValue,
-                  let messageIdsRaw = interaction.option("message_ids")?.stringValue else {
-                try await interaction.respond("Missing arguments", ephemeral: true)
-                return
-            }
-            let ids = messageIdsRaw
-                .split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            guard !ids.isEmpty else {
-                try await interaction.respond("No valid message IDs provided.", ephemeral: true)
-                return
-            }
-            do {
-                try await bot.bulkDeleteMessages(channelId: channelId, messageIds: ids)
-                try await interaction.respond("Bulk delete requested for \(ids.count) message(s).")
-            } catch {
-                try await interaction.respond("bulkDeleteMessages failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand("delete_last", description: "Test deleteMessage REST endpoint") { interaction in
-            guard let last = await state.getLastBotMessage() else {
-                try await interaction.respond("No tracked message to delete.", ephemeral: true)
-                return
-            }
-            do {
-                try await bot.deleteMessage(channelId: last.channelId, messageId: last.id)
-                await state.clearLastBotMessage()
-                try await interaction.respond("Deleted message \(last.id).", ephemeral: true)
-            } catch {
-                try await interaction.respond("deleteMessage failed: \(friendlyError(error))", ephemeral: true)
-            }
-        }
-
-        bot.slashCommand("followup_flow", description: "Test get/edit/delete followup endpoints") { interaction in
-            do {
-                try await interaction.defer_(ephemeral: true)
-                let followup = try await interaction.followUp("Created followup message for lifecycle test.")
-                await state.setLastFollowupMessage(followup)
-                let fetched = try await interaction.getFollowUp(messageId: followup.id)
-                let edited = try await interaction.editFollowUp(
-                    messageId: fetched.id,
-                    content: "Followup edited successfully."
-                )
-                try await interaction.deleteFollowUp(messageId: edited.id)
-                await state.clearLastFollowupMessage()
-                try await interaction.editResponse("Followup lifecycle passed for message id \(edited.id).")
-            } catch {
-                _ = try? await interaction.editResponse("followup_flow failed: \(friendlyError(error))")
-            }
         }
 
         bot.slashCommand("componentsv2", description: "Send Components V2 interactive message") { interaction in
@@ -718,38 +532,17 @@ struct DiscordKitBotMain {
         }
 
         bot.slashCommand(
-            "set_status",
-            description: "Set bot presence status and activity",
-            options: [
-                .string(
-                    "status",
-                    description: "Presence status",
-                    required: true,
-                    choices: [
-                        CommandChoice(name: "online", value: "online"),
-                        CommandChoice(name: "idle", value: "idle"),
-                        CommandChoice(name: "dnd", value: "dnd"),
-                        CommandChoice(name: "invisible", value: "invisible"),
-                    ]
-                ),
-                .string("activity", description: "Activity name", required: false)
-            ]
+            "testpanel",
+            description: "Open master endpoint + component test panel"
         ) { interaction in
-            guard let statusRaw = interaction.option("status")?.stringValue,
-                  let status = parsePresenceStatus(statusRaw) else {
-                try await interaction.respond("Invalid status value.", ephemeral: true)
+            guard let channelId = interaction.channelId else {
+                try await interaction.respond("No channel available for panel.", ephemeral: true)
                 return
             }
-
-            let activityName = interaction.option("activity")?.stringValue
-            let activity = activityName.map { DiscordActivity(name: $0, type: .playing) }
-
-            do {
-                try await bot.setPresence(status: status, activity: activity)
-                try await interaction.respond("Presence updated to \(status.rawValue).", ephemeral: true)
-            } catch {
-                try await interaction.respond("setPresence failed: \(friendlyError(error))", ephemeral: true)
-            }
+            let panel = apiTestPanelData()
+            let sent = try await bot.sendComponentsV2Message(to: channelId, components: panel)
+            await state.setLastBotMessage(sent)
+            try await interaction.respond("Master API test panel sent as message \(sent.id).", ephemeral: true)
         }
 
         print("Starting DiscordKitBot...")
@@ -783,6 +576,412 @@ private func friendlyError(_ error: Error) -> String {
         return message
     }
     return String(describing: error)
+}
+
+private struct EndpointCollectionDump<Item: Encodable>: Encodable {
+    let count: Int
+    let items: [Item]
+}
+
+private struct BulkDeleteResult: Encodable {
+    let channelId: String
+    let messageIds: [String]
+}
+
+private struct DeleteMessageResult: Encodable {
+    let channelId: String
+    let messageId: String
+}
+
+private struct PresenceUpdateResult: Encodable {
+    let status: String
+    let activityName: String?
+}
+
+private struct FollowupLifecycleResult: Encodable {
+    let created: Message
+    let fetched: Message
+    let edited: Message
+    let deletedMessageId: String
+}
+
+private func sendMessageDump<T: Encodable>(_ message: Message, title: String, value: T) async throws {
+    let chunks = renderEndpointDumpChunks(title: title, value: value)
+    for (index, chunk) in chunks.enumerated() {
+        if index == 0 {
+            _ = try await message.reply(chunk)
+        } else {
+            _ = try await message.respond(chunk)
+        }
+    }
+}
+
+private func sendInteractionDump<T: Encodable>(
+    _ interaction: Interaction,
+    title: String,
+    value: T,
+    ephemeral: Bool
+) async throws {
+    let chunks = renderEndpointDumpChunks(title: title, value: value)
+    guard let first = chunks.first else { return }
+    try await interaction.respond(first, ephemeral: ephemeral)
+    for chunk in chunks.dropFirst() {
+        _ = try await interaction.followUp(chunk, ephemeral: ephemeral)
+    }
+}
+
+private func sendDeferredInteractionDump<T: Encodable>(
+    _ interaction: Interaction,
+    title: String,
+    value: T,
+    ephemeral: Bool
+) async throws {
+    let chunks = renderEndpointDumpChunks(title: title, value: value)
+    guard let first = chunks.first else { return }
+    _ = try await interaction.editResponse(first)
+    for chunk in chunks.dropFirst() {
+        _ = try await interaction.followUp(chunk, ephemeral: ephemeral)
+    }
+}
+
+private func renderEndpointDumpChunks<T: Encodable>(title: String, value: T) -> [String] {
+    let json = encodePrettyJSON(value) ?? #"{"error":"failed to encode payload"}"#
+    let parts = splitForDiscord(json, limit: 1500)
+    if parts.count == 1 {
+        return ["\(title)\n```json\n\(json)\n```"]
+    }
+    return parts.enumerated().map { index, part in
+        "\(title) (\(index + 1)/\(parts.count))\n```json\n\(part)\n```"
+    }
+}
+
+private func encodePrettyJSON<T: Encodable>(_ value: T) -> String? {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    encoder.keyEncodingStrategy = .convertToSnakeCase
+    guard let data = try? encoder.encode(value) else { return nil }
+    return String(data: data, encoding: .utf8)
+}
+
+private func splitForDiscord(_ text: String, limit: Int = 1900) -> [String] {
+    guard text.count > limit else { return [text] }
+
+    var chunks: [String] = []
+    var current = ""
+
+    for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let lineWithBreak = line + "\n"
+        if current.count + lineWithBreak.count > limit, !current.isEmpty {
+            chunks.append(current)
+            current = ""
+        }
+
+        if lineWithBreak.count > limit {
+            let raw = String(lineWithBreak)
+            var start = raw.startIndex
+            while start < raw.endIndex {
+                let end = raw.index(start, offsetBy: limit, limitedBy: raw.endIndex) ?? raw.endIndex
+                chunks.append(String(raw[start..<end]))
+                start = end
+            }
+            continue
+        }
+
+        current += lineWithBreak
+    }
+
+    if !current.isEmpty {
+        chunks.append(current)
+    }
+
+    return chunks
+}
+
+private struct EndpointActionResult: Encodable {
+    let endpoint: String
+    let success: Bool
+    let details: JSONValue?
+}
+
+private struct CommandLifecycleResult: Encodable {
+    let created: ApplicationCommand
+    let edited: ApplicationCommand?
+    let deleted: Bool
+}
+
+private struct RoleMutationResult: Encodable {
+    let guildId: String
+    let userId: String
+    let roleId: String
+    let action: String
+    let success: Bool
+}
+
+private func apiTestPanelData() -> [ComponentV2Node] {
+    let options: [ComponentV2SelectOption] = [
+        ComponentV2SelectOption(label: "GET /gateway/bot", value: "gateway_bot"),
+        ComponentV2SelectOption(label: "GET global commands", value: "get_global_commands"),
+        ComponentV2SelectOption(label: "GET guild commands", value: "get_guild_commands"),
+        ComponentV2SelectOption(label: "PATCH global command", value: "edit_global_command"),
+        ComponentV2SelectOption(label: "PATCH guild command", value: "edit_guild_command"),
+        ComponentV2SelectOption(label: "DELETE global command", value: "delete_global_command"),
+        ComponentV2SelectOption(label: "DELETE guild command", value: "delete_guild_command"),
+        ComponentV2SelectOption(label: "GET @original interaction response", value: "get_original_response"),
+        ComponentV2SelectOption(label: "DELETE @original interaction response", value: "delete_original_response"),
+        ComponentV2SelectOption(label: "GET guild channels", value: "get_guild_channels"),
+        ComponentV2SelectOption(label: "GET guild members", value: "get_guild_members"),
+        ComponentV2SelectOption(label: "GET guild members search", value: "search_guild_members"),
+        ComponentV2SelectOption(label: "PATCH guild member", value: "modify_guild_member"),
+        ComponentV2SelectOption(label: "PUT add member role", value: "add_member_role"),
+        ComponentV2SelectOption(label: "DELETE remove member role", value: "remove_member_role"),
+    ]
+
+    return [
+        .container(
+            ComponentV2Container(
+                accentColor: 0x5865F2,
+                components: [
+                    .textDisplay(ComponentV2TextDisplay("DiscordKit Master Endpoint Test Panel")),
+                    .textDisplay(ComponentV2TextDisplay("Pick one endpoint from the menu below to run a full API test.")),
+                    .actionRow(
+                        ComponentV2ActionRow(
+                            components: [
+                                .stringSelect(
+                                    ComponentV2StringSelect(
+                                        customId: "api_test_select",
+                                        options: options,
+                                        placeholder: "Choose endpoint test",
+                                        minValues: 1,
+                                        maxValues: 1
+                                    )
+                                )
+                            ]
+                        )
+                    ),
+                ]
+            )
+        ),
+    ]
+}
+
+private func runPanelTest(
+    _ selected: String,
+    bot: DiscordBot,
+    interaction: Interaction,
+    testGuildId: String,
+    testChannelId: String,
+    testRoleId: String?
+) async throws {
+    switch selected {
+    case "gateway_bot":
+        let gateway = try await bot.getGatewayBot()
+        try await sendDeferredInteractionDump(interaction, title: "GET /gateway/bot", value: gateway, ephemeral: true)
+
+    case "get_global_commands":
+        let commands = try await bot.getSlashCommands()
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "GET /applications/{application.id}/commands",
+            value: EndpointCollectionDump(count: commands.count, items: commands),
+            ephemeral: true
+        )
+
+    case "get_guild_commands":
+        let commands = try await bot.getSlashCommands(guildId: testGuildId)
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "GET /applications/{application.id}/guilds/{guild.id}/commands",
+            value: EndpointCollectionDump(count: commands.count, items: commands),
+            ephemeral: true
+        )
+
+    case "edit_global_command":
+        let name = tempCommandName(prefix: "edg")
+        let created = try await bot.createSlashCommand(name, description: "temp edit global")
+        let edited = try await bot.editSlashCommand(
+            commandId: created.id,
+            edit: EditApplicationCommand(description: "edited \(name)")
+        )
+        try await bot.deleteSlashCommand(commandId: created.id)
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "PATCH /applications/{application.id}/commands/{command.id}",
+            value: CommandLifecycleResult(created: created, edited: edited, deleted: true),
+            ephemeral: true
+        )
+
+    case "edit_guild_command":
+        let name = tempCommandName(prefix: "edl")
+        let created = try await bot.createSlashCommand(name, description: "temp edit guild", guildId: testGuildId)
+        let edited = try await bot.editSlashCommand(
+            commandId: created.id,
+            guildId: testGuildId,
+            edit: EditApplicationCommand(description: "edited \(name)")
+        )
+        try await bot.deleteSlashCommand(commandId: created.id, guildId: testGuildId)
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "PATCH /applications/{application.id}/guilds/{guild.id}/commands/{command.id}",
+            value: CommandLifecycleResult(created: created, edited: edited, deleted: true),
+            ephemeral: true
+        )
+
+    case "delete_global_command":
+        let name = tempCommandName(prefix: "delg")
+        let created = try await bot.createSlashCommand(name, description: "temp delete global")
+        try await bot.deleteSlashCommand(commandId: created.id)
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "DELETE /applications/{application.id}/commands/{command.id}",
+            value: CommandLifecycleResult(created: created, edited: nil, deleted: true),
+            ephemeral: true
+        )
+
+    case "delete_guild_command":
+        let name = tempCommandName(prefix: "dell")
+        let created = try await bot.createSlashCommand(name, description: "temp delete guild", guildId: testGuildId)
+        try await bot.deleteSlashCommand(commandId: created.id, guildId: testGuildId)
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "DELETE /applications/{application.id}/guilds/{guild.id}/commands/{command.id}",
+            value: CommandLifecycleResult(created: created, edited: nil, deleted: true),
+            ephemeral: true
+        )
+
+    case "get_original_response":
+        let original = try await interaction.getOriginalResponse()
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "GET /webhooks/{application.id}/{interaction.token}/messages/@original",
+            value: original,
+            ephemeral: true
+        )
+
+    case "delete_original_response":
+        let original = try await interaction.getOriginalResponse()
+        try await interaction.deleteOriginalResponse()
+        let chunks = renderEndpointDumpChunks(
+            title: "DELETE /webhooks/{application.id}/{interaction.token}/messages/@original",
+            value: DeleteMessageResult(channelId: original.channelId, messageId: original.id)
+        )
+        for chunk in chunks {
+            _ = try await interaction.followUp(chunk, ephemeral: true)
+        }
+
+    case "get_guild_channels":
+        let channels = try await bot.getGuildChannels(testGuildId)
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "GET /guilds/{guild.id}/channels",
+            value: EndpointCollectionDump(count: channels.count, items: channels),
+            ephemeral: true
+        )
+
+    case "get_guild_members":
+        let members = try await bot.getGuildMembers(testGuildId, query: GuildMembersQuery(limit: 25))
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "GET /guilds/{guild.id}/members",
+            value: EndpointCollectionDump(count: members.count, items: members),
+            ephemeral: true
+        )
+
+    case "search_guild_members":
+        let lookup = interaction.invoker?.username ?? "a"
+        let members = try await bot.searchGuildMembers(
+            testGuildId,
+            query: GuildMemberSearchQuery(query: lookup, limit: 10)
+        )
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "GET /guilds/{guild.id}/members/search",
+            value: EndpointCollectionDump(count: members.count, items: members),
+            ephemeral: true
+        )
+
+    case "modify_guild_member":
+        guard let targetUserId = interaction.invoker?.id else {
+            throw DiscordError.invalidRequest(message: "Unable to resolve target user for member patch test.")
+        }
+        let current = try await bot.getGuildMember(guildId: testGuildId, userId: targetUserId)
+        let payload: ModifyGuildMember
+        if let nick = current.nick {
+            payload = ModifyGuildMember(nick: nick)
+        } else if let deaf = current.deaf {
+            payload = ModifyGuildMember(deaf: deaf)
+        } else if let mute = current.mute {
+            payload = ModifyGuildMember(mute: mute)
+        } else {
+            payload = ModifyGuildMember(roles: current.roles)
+        }
+        let patched = try await bot.modifyGuildMember(
+            guildId: testGuildId,
+            userId: targetUserId,
+            modify: payload,
+            auditLogReason: "DiscordKit PATCH guild member endpoint test"
+        )
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "PATCH /guilds/{guild.id}/members/{user.id}",
+            value: patched,
+            ephemeral: true
+        )
+
+    case "add_member_role":
+        guard let targetUserId = interaction.invoker?.id else {
+            throw DiscordError.invalidRequest(message: "Unable to resolve target user for role add test.")
+        }
+        let roleId = try await resolvePanelRoleId(bot: bot, guildId: testGuildId, preferredRoleId: testRoleId)
+        try await bot.addGuildMemberRole(
+            guildId: testGuildId,
+            userId: targetUserId,
+            roleId: roleId,
+            auditLogReason: "DiscordKit add role endpoint test"
+        )
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "PUT /guilds/{guild.id}/members/{user.id}/roles/{role.id}",
+            value: RoleMutationResult(guildId: testGuildId, userId: targetUserId, roleId: roleId, action: "add", success: true),
+            ephemeral: true
+        )
+
+    case "remove_member_role":
+        guard let targetUserId = interaction.invoker?.id else {
+            throw DiscordError.invalidRequest(message: "Unable to resolve target user for role remove test.")
+        }
+        let roleId = try await resolvePanelRoleId(bot: bot, guildId: testGuildId, preferredRoleId: testRoleId)
+        try await bot.removeGuildMemberRole(
+            guildId: testGuildId,
+            userId: targetUserId,
+            roleId: roleId,
+            auditLogReason: "DiscordKit remove role endpoint test"
+        )
+        try await sendDeferredInteractionDump(
+            interaction,
+            title: "DELETE /guilds/{guild.id}/members/{user.id}/roles/{role.id}",
+            value: RoleMutationResult(guildId: testGuildId, userId: targetUserId, roleId: roleId, action: "remove", success: true),
+            ephemeral: true
+        )
+
+    default:
+        throw DiscordError.invalidRequest(message: "Unknown panel test id '\(selected)'")
+    }
+}
+
+private func resolvePanelRoleId(bot: DiscordBot, guildId: String, preferredRoleId: String?) async throws -> String {
+    if let preferredRoleId, !preferredRoleId.isEmpty {
+        return preferredRoleId
+    }
+    let roles = try await bot.getGuildRoles(guildId)
+    guard let role = roles.first(where: { !$0.managed && $0.name != "@everyone" }) else {
+        throw DiscordError.resourceNotFound(endpoint: "No assignable role found for role mutation tests")
+    }
+    return role.id
+}
+
+private func tempCommandName(prefix: String) -> String {
+    let timestamp = Int(Date().timeIntervalSince1970)
+    return "\(prefix)\(timestamp)"
 }
 
 private func componentV2DemoData() -> (components: [ComponentV2Node], attachments: [DiscordFileUpload]) {
@@ -824,7 +1023,7 @@ private func componentV2DemoData() -> (components: [ComponentV2Node], attachment
                             accessory: .thumbnail(
                                 ComponentV2Thumbnail(
                                     media: ComponentV2Media(
-                                        url: "https://images.unsplash.com/photo-1518770660439-4636190af475?w=512"
+                                        url: DemoImageURLs.swiftOrange
                                     )
                                 )
                             )
@@ -909,12 +1108,12 @@ private func componentV2DemoData() -> (components: [ComponentV2Node], attachment
                             items: [
                                 ComponentV2MediaGalleryItem(
                                     media: ComponentV2UnfurledMediaItem(
-                                        url: "https://images.unsplash.com/photo-1515879218367-8466d910aaa4?w=1200"
+                                        url: DemoImageURLs.swift25
                                     )
                                 ),
                                 ComponentV2MediaGalleryItem(
                                     media: ComponentV2UnfurledMediaItem(
-                                        url: "https://images.unsplash.com/photo-1519389950473-47ba0277781c?w=1200"
+                                        url: DemoImageURLs.swiftGreen
                                     )
                                 ),
                             ]
