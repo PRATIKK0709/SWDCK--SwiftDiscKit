@@ -3,12 +3,19 @@ import DiscordKit
 
 private enum LocalDefaults {
     static let token = "SET_BOT_TOKEN"
-    static let guildId = "1469915389537550357"
-    static let channelId = "1473037288656081027"
+    static let guildId = "SET_TEST_GUILD_ID"
+    static let channelId = "SET_TEST_CHANNEL_ID"
+}
+
+private enum DemoImageURLs {
+    static let swift25 = "https://img.icons8.com/?size=512&id=24465&format=png&color=53B848"
+    static let swiftOrange = "https://img.icons8.com/?size=512&id=24465&format=png&color=53B848"
+    static let swiftGreen = "https://img.icons8.com/?size=512&id=24465&format=png&color=53B848"
 }
 
 actor DemoState {
     private var lastBotMessage: Message?
+    private var lastFollowupMessage: Message?
     private var didInitialReadySetup = false
 
     func setLastBotMessage(_ message: Message) {
@@ -23,6 +30,18 @@ actor DemoState {
         lastBotMessage = nil
     }
 
+    func setLastFollowupMessage(_ message: Message) {
+        lastFollowupMessage = message
+    }
+
+    func getLastFollowupMessage() -> Message? {
+        lastFollowupMessage
+    }
+
+    func clearLastFollowupMessage() {
+        lastFollowupMessage = nil
+    }
+
     func consumeInitialReadySetup() -> Bool {
         if didInitialReadySetup { return false }
         didInitialReadySetup = true
@@ -30,15 +49,46 @@ actor DemoState {
     }
 }
 
+private enum DotEnv {
+    static func load(from path: String = ".env") -> [String: String] {
+        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return [:]
+        }
+
+        var values: [String: String] = [:]
+        for rawLine in content.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+            guard let separatorIndex = line.firstIndex(of: "=") else { continue }
+
+            let key = line[..<separatorIndex].trimmingCharacters(in: .whitespaces)
+            var value = line[line.index(after: separatorIndex)...].trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
+                value.removeFirst()
+                value.removeLast()
+            }
+            values[key] = value
+        }
+        return values
+    }
+}
+
 @main
 struct DiscordKitBotMain {
     static func main() async throws {
-        let token = ProcessInfo.processInfo.environment["BOT_TOKEN"]?.nonEmpty ?? LocalDefaults.token
+        let dotenv = DotEnv.load()
+        let token = ProcessInfo.processInfo.environment["BOT_TOKEN"]?.nonEmpty
+            ?? dotenv["BOT_TOKEN"]?.nonEmpty
+            ?? LocalDefaults.token
         guard token != LocalDefaults.token else {
-            fatalError("Set BOT_TOKEN in your environment before running.")
+            fatalError("Set BOT_TOKEN in shell environment or .env")
         }
-        let testChannelId = ProcessInfo.processInfo.environment["TEST_CHANNEL_ID"]?.nonEmpty ?? LocalDefaults.channelId
-        let testGuildId = ProcessInfo.processInfo.environment["TEST_GUILD_ID"]?.nonEmpty ?? LocalDefaults.guildId
+        let testChannelId = ProcessInfo.processInfo.environment["TEST_CHANNEL_ID"]?.nonEmpty
+            ?? dotenv["TEST_CHANNEL_ID"]?.nonEmpty
+            ?? LocalDefaults.channelId
+        let testGuildId = ProcessInfo.processInfo.environment["TEST_GUILD_ID"]?.nonEmpty
+            ?? dotenv["TEST_GUILD_ID"]?.nonEmpty
+            ?? LocalDefaults.guildId
 
         let bot = DiscordBot(
             token: token,
@@ -71,6 +121,15 @@ struct DiscordKitBotMain {
                 await state.setLastBotMessage(startup)
             } catch {
                 print("Startup sendMessage failed: \(error)")
+            }
+
+            do {
+                try await bot.setPresence(
+                    status: .online,
+                    activity: DiscordActivity(name: "SwiftDiscKit", type: .watching)
+                )
+            } catch {
+                print("setPresence failed: \(error)")
             }
         }
 
@@ -139,7 +198,16 @@ struct DiscordKitBotMain {
                 Text commands:
                 !ping
                 !channel <channel_id>
+                !guild <guild_id>
+                !roles <guild_id>
+                !user <user_id>
+                !member <guild_id> <user_id>
                 !say <channel_id> <text>
+                !msgget <channel_id> <message_id>
+                !msghistory <channel_id> [limit]
+                !msgedit <channel_id> <message_id> <text>
+                !bulkdelete <channel_id> <id1,id2,...>
+                !status <online|idle|dnd|invisible> [activity]
                 !componentsv2
                 !delete-last
                 !register-single
@@ -156,9 +224,75 @@ struct DiscordKitBotMain {
                 }
                 do {
                     let channel = try await bot.getChannel(channelId)
-                    try await message.reply("Channel id=\(channel.id), type=\(channel.type.rawValue), name=\(channel.name ?? "nil")")
+                    try await sendMessageDump(message, title: "getChannel", value: channel)
                 } catch {
-                    try await message.reply("getChannel failed: \(error)")
+                    try await message.reply("getChannel failed: \(friendlyError(error))")
+                }
+                return
+            }
+
+            if content.hasPrefix("!guild ") {
+                let guildId = String(content.dropFirst("!guild ".count)).trimmingCharacters(in: .whitespaces)
+                guard !guildId.isEmpty else {
+                    try await message.reply("Usage: !guild <guild_id>")
+                    return
+                }
+                do {
+                    let guild = try await bot.getGuild(guildId)
+                    try await sendMessageDump(message, title: "getGuild", value: guild)
+                } catch {
+                    try await message.reply("getGuild failed: \(friendlyError(error))")
+                }
+                return
+            }
+
+            if content.hasPrefix("!roles ") {
+                let guildId = String(content.dropFirst("!roles ".count)).trimmingCharacters(in: .whitespaces)
+                guard !guildId.isEmpty else {
+                    try await message.reply("Usage: !roles <guild_id>")
+                    return
+                }
+                do {
+                    let roles = try await bot.getGuildRoles(guildId)
+                    try await sendMessageDump(
+                        message,
+                        title: "getGuildRoles",
+                        value: EndpointCollectionDump(count: roles.count, items: roles)
+                    )
+                } catch {
+                    try await message.reply("getGuildRoles failed: \(friendlyError(error))")
+                }
+                return
+            }
+
+            if content.hasPrefix("!user ") {
+                let userId = String(content.dropFirst("!user ".count)).trimmingCharacters(in: .whitespaces)
+                guard !userId.isEmpty else {
+                    try await message.reply("Usage: !user <user_id>")
+                    return
+                }
+                do {
+                    let user = try await bot.getUser(userId)
+                    try await sendMessageDump(message, title: "getUser", value: user)
+                } catch {
+                    try await message.reply("getUser failed: \(friendlyError(error))")
+                }
+                return
+            }
+
+            if content.hasPrefix("!member ") {
+                let parts = content.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+                guard parts.count == 3 else {
+                    try await message.reply("Usage: !member <guild_id> <user_id>")
+                    return
+                }
+                let guildId = String(parts[1])
+                let userId = String(parts[2])
+                do {
+                    let member = try await bot.getGuildMember(guildId: guildId, userId: userId)
+                    try await sendMessageDump(message, title: "getGuildMember", value: member)
+                } catch {
+                    try await message.reply("getGuildMember failed: \(friendlyError(error))")
                 }
                 return
             }
@@ -174,9 +308,118 @@ struct DiscordKitBotMain {
                 do {
                     let sent = try await bot.sendMessage(to: targetChannelId, content: text)
                     await state.setLastBotMessage(sent)
-                    try await message.reply("Sent message id \(sent.id) to \(targetChannelId)")
+                    try await sendMessageDump(message, title: "sendMessage", value: sent)
                 } catch {
-                    try await message.reply("sendMessage failed: \(error)")
+                    try await message.reply("sendMessage failed: \(friendlyError(error))")
+                }
+                return
+            }
+
+            if content.hasPrefix("!msgget ") {
+                let parts = content.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+                guard parts.count == 3 else {
+                    try await message.reply("Usage: !msgget <channel_id> <message_id>")
+                    return
+                }
+                let channelId = String(parts[1])
+                let messageId = String(parts[2])
+                do {
+                    let fetched = try await bot.getMessage(channelId: channelId, messageId: messageId)
+                    try await sendMessageDump(message, title: "getMessage", value: fetched)
+                } catch {
+                    try await message.reply("getMessage failed: \(friendlyError(error))")
+                }
+                return
+            }
+
+            if content.hasPrefix("!msghistory ") {
+                let parts = content.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+                guard parts.count >= 2 else {
+                    try await message.reply("Usage: !msghistory <channel_id> [limit]")
+                    return
+                }
+                let channelId = String(parts[1])
+                let limit = parts.count == 3 ? Int(parts[2]) ?? 10 : 10
+                let safeLimit = min(max(limit, 1), 100)
+                do {
+                    let messages = try await bot.getMessages(
+                        channelId: channelId,
+                        query: MessageHistoryQuery(limit: safeLimit)
+                    )
+                    try await sendMessageDump(
+                        message,
+                        title: "getMessages",
+                        value: EndpointCollectionDump(count: messages.count, items: messages)
+                    )
+                } catch {
+                    try await message.reply("getMessages failed: \(friendlyError(error))")
+                }
+                return
+            }
+
+            if content.hasPrefix("!msgedit ") {
+                let parts = content.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
+                guard parts.count == 4 else {
+                    try await message.reply("Usage: !msgedit <channel_id> <message_id> <new_text>")
+                    return
+                }
+                let channelId = String(parts[1])
+                let messageId = String(parts[2])
+                let newText = String(parts[3])
+                do {
+                    let edited = try await bot.editMessage(channelId: channelId, messageId: messageId, content: newText)
+                    try await sendMessageDump(message, title: "editMessage", value: edited)
+                } catch {
+                    try await message.reply("editMessage failed: \(friendlyError(error))")
+                }
+                return
+            }
+
+            if content.hasPrefix("!bulkdelete ") {
+                let parts = content.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+                guard parts.count == 3 else {
+                    try await message.reply("Usage: !bulkdelete <channel_id> <id1,id2,...>")
+                    return
+                }
+                let channelId = String(parts[1])
+                let ids = String(parts[2]).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                guard !ids.isEmpty else {
+                    try await message.reply("No message ids supplied.")
+                    return
+                }
+                do {
+                    try await bot.bulkDeleteMessages(channelId: channelId, messageIds: ids)
+                    try await sendMessageDump(
+                        message,
+                        title: "bulkDeleteMessages",
+                        value: BulkDeleteResult(channelId: channelId, messageIds: ids)
+                    )
+                } catch {
+                    try await message.reply("bulkDeleteMessages failed: \(friendlyError(error))")
+                }
+                return
+            }
+
+            if content.hasPrefix("!status ") {
+                let parts = content.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+                guard parts.count >= 2 else {
+                    try await message.reply("Usage: !status <online|idle|dnd|invisible> [activity]")
+                    return
+                }
+                guard let status = parsePresenceStatus(String(parts[1])) else {
+                    try await message.reply("Invalid status. Use online, idle, dnd, or invisible.")
+                    return
+                }
+                let activity = parts.count == 3 ? DiscordActivity(name: String(parts[2]), type: .playing) : nil
+                do {
+                    try await bot.setPresence(status: status, activity: activity)
+                    try await sendMessageDump(
+                        message,
+                        title: "setPresence",
+                        value: PresenceUpdateResult(status: status.rawValue, activityName: activity?.name)
+                    )
+                } catch {
+                    try await message.reply("setPresence failed: \(friendlyError(error))")
                 }
                 return
             }
@@ -189,9 +432,13 @@ struct DiscordKitBotMain {
                 do {
                     try await bot.deleteMessage(channelId: last.channelId, messageId: last.id)
                     await state.clearLastBotMessage()
-                    try await message.reply("Deleted message \(last.id).")
+                    try await sendMessageDump(
+                        message,
+                        title: "deleteMessage",
+                        value: DeleteMessageResult(channelId: last.channelId, messageId: last.id)
+                    )
                 } catch {
-                    try await message.reply("deleteMessage failed: \(error)")
+                    try await message.reply("deleteMessage failed: \(friendlyError(error))")
                 }
                 return
             }
@@ -207,7 +454,7 @@ struct DiscordKitBotMain {
                     await state.setLastBotMessage(sent)
                     try await message.reply("Sent Components V2 test message \(sent.id)")
                 } catch {
-                    try await message.reply("sendComponentsV2Message failed: \(error)")
+                    try await message.reply("sendComponentsV2Message failed: \(friendlyError(error))")
                 }
                 return
             }
@@ -219,9 +466,9 @@ struct DiscordKitBotMain {
                         description: "Single create-command endpoint test",
                         guildId: testGuildId
                     )
-                    try await message.reply("Created /\(command.name) with id \(command.id)")
+                    try await sendMessageDump(message, title: "createSlashCommand", value: command)
                 } catch {
-                    try await message.reply("createSlashCommand failed: \(error)")
+                    try await message.reply("createSlashCommand failed: \(friendlyError(error))")
                 }
             }
         }
@@ -238,7 +485,8 @@ struct DiscordKitBotMain {
             try await interaction.defer_()
             try await Task.sleep(nanoseconds: 1_000_000_000)
             try await interaction.editResponse("Deferred response edited successfully.")
-            _ = try await interaction.followUp("Follow-up message sent.")
+            let followup = try await interaction.followUp("Follow-up message sent.")
+            await state.setLastFollowupMessage(followup)
         }
 
         bot.slashCommand(
@@ -255,9 +503,92 @@ struct DiscordKitBotMain {
 
             do {
                 let channel = try await bot.getChannel(channelId)
-                try await interaction.respond("Channel id=\(channel.id), type=\(channel.type.rawValue), name=\(channel.name ?? "nil")")
+                try await sendInteractionDump(interaction, title: "getChannel", value: channel, ephemeral: false)
             } catch {
-                try await interaction.respond("getChannel failed: \(error)", ephemeral: true)
+                try await interaction.respond("getChannel failed: \(friendlyError(error))", ephemeral: true)
+            }
+        }
+
+        bot.slashCommand(
+            "guildinfo",
+            description: "Test getGuild REST endpoint",
+            options: [
+                .string("guild_id", description: "Guild ID", required: true)
+            ]
+        ) { interaction in
+            guard let guildId = interaction.option("guild_id")?.stringValue else {
+                try await interaction.respond("Missing guild_id", ephemeral: true)
+                return
+            }
+            do {
+                let guild = try await bot.getGuild(guildId)
+                try await sendInteractionDump(interaction, title: "getGuild", value: guild, ephemeral: false)
+            } catch {
+                try await interaction.respond("getGuild failed: \(friendlyError(error))", ephemeral: true)
+            }
+        }
+
+        bot.slashCommand(
+            "roles",
+            description: "Test getGuildRoles REST endpoint",
+            options: [
+                .string("guild_id", description: "Guild ID", required: true)
+            ]
+        ) { interaction in
+            guard let guildId = interaction.option("guild_id")?.stringValue else {
+                try await interaction.respond("Missing guild_id", ephemeral: true)
+                return
+            }
+            do {
+                let roles = try await bot.getGuildRoles(guildId)
+                try await sendInteractionDump(
+                    interaction,
+                    title: "getGuildRoles",
+                    value: EndpointCollectionDump(count: roles.count, items: roles),
+                    ephemeral: false
+                )
+            } catch {
+                try await interaction.respond("getGuildRoles failed: \(friendlyError(error))", ephemeral: true)
+            }
+        }
+
+        bot.slashCommand(
+            "userinfo",
+            description: "Test getUser REST endpoint",
+            options: [
+                .string("user_id", description: "User ID", required: true)
+            ]
+        ) { interaction in
+            guard let userId = interaction.option("user_id")?.stringValue else {
+                try await interaction.respond("Missing user_id", ephemeral: true)
+                return
+            }
+            do {
+                let user = try await bot.getUser(userId)
+                try await sendInteractionDump(interaction, title: "getUser", value: user, ephemeral: false)
+            } catch {
+                try await interaction.respond("getUser failed: \(friendlyError(error))", ephemeral: true)
+            }
+        }
+
+        bot.slashCommand(
+            "memberinfo",
+            description: "Test getGuildMember REST endpoint",
+            options: [
+                .string("guild_id", description: "Guild ID", required: true),
+                .string("user_id", description: "User ID", required: true)
+            ]
+        ) { interaction in
+            guard let guildId = interaction.option("guild_id")?.stringValue,
+                  let userId = interaction.option("user_id")?.stringValue else {
+                try await interaction.respond("Missing arguments", ephemeral: true)
+                return
+            }
+            do {
+                let member = try await bot.getGuildMember(guildId: guildId, userId: userId)
+                try await sendInteractionDump(interaction, title: "getGuildMember", value: member, ephemeral: false)
+            } catch {
+                try await interaction.respond("getGuildMember failed: \(friendlyError(error))", ephemeral: true)
             }
         }
 
@@ -278,9 +609,117 @@ struct DiscordKitBotMain {
             do {
                 let sent = try await bot.sendMessage(to: channelId, content: text)
                 await state.setLastBotMessage(sent)
-                try await interaction.respond("Sent message id \(sent.id)")
+                try await sendInteractionDump(interaction, title: "sendMessage", value: sent, ephemeral: false)
             } catch {
-                try await interaction.respond("sendMessage failed: \(error)", ephemeral: true)
+                try await interaction.respond("sendMessage failed: \(friendlyError(error))", ephemeral: true)
+            }
+        }
+
+        bot.slashCommand(
+            "message_get",
+            description: "Test getMessage endpoint",
+            options: [
+                .string("channel_id", description: "Channel ID", required: true),
+                .string("message_id", description: "Message ID", required: true)
+            ]
+        ) { interaction in
+            guard let channelId = interaction.option("channel_id")?.stringValue,
+                  let messageId = interaction.option("message_id")?.stringValue else {
+                try await interaction.respond("Missing arguments", ephemeral: true)
+                return
+            }
+            do {
+                let fetched = try await bot.getMessage(channelId: channelId, messageId: messageId)
+                try await sendInteractionDump(interaction, title: "getMessage", value: fetched, ephemeral: false)
+            } catch {
+                try await interaction.respond("getMessage failed: \(friendlyError(error))", ephemeral: true)
+            }
+        }
+
+        bot.slashCommand(
+            "message_history",
+            description: "Test getMessages endpoint",
+            options: [
+                .string("channel_id", description: "Channel ID", required: true),
+                .integer("limit", description: "1-100", required: false)
+            ]
+        ) { interaction in
+            guard let channelId = interaction.option("channel_id")?.stringValue else {
+                try await interaction.respond("Missing channel_id", ephemeral: true)
+                return
+            }
+            let requestedLimit = interaction.option("limit")?.intValue ?? 10
+            let safeLimit = min(max(requestedLimit, 1), 100)
+            do {
+                let messages = try await bot.getMessages(
+                    channelId: channelId,
+                    query: MessageHistoryQuery(limit: safeLimit)
+                )
+                try await sendInteractionDump(
+                    interaction,
+                    title: "getMessages",
+                    value: EndpointCollectionDump(count: messages.count, items: messages),
+                    ephemeral: false
+                )
+            } catch {
+                try await interaction.respond("getMessages failed: \(friendlyError(error))", ephemeral: true)
+            }
+        }
+
+        bot.slashCommand(
+            "message_edit",
+            description: "Test editMessage endpoint",
+            options: [
+                .string("channel_id", description: "Channel ID", required: true),
+                .string("message_id", description: "Message ID", required: true),
+                .string("text", description: "New content", required: true)
+            ]
+        ) { interaction in
+            guard let channelId = interaction.option("channel_id")?.stringValue,
+                  let messageId = interaction.option("message_id")?.stringValue,
+                  let text = interaction.option("text")?.stringValue else {
+                try await interaction.respond("Missing arguments", ephemeral: true)
+                return
+            }
+            do {
+                let edited = try await bot.editMessage(channelId: channelId, messageId: messageId, content: text)
+                try await sendInteractionDump(interaction, title: "editMessage", value: edited, ephemeral: false)
+            } catch {
+                try await interaction.respond("editMessage failed: \(friendlyError(error))", ephemeral: true)
+            }
+        }
+
+        bot.slashCommand(
+            "bulk_delete",
+            description: "Test bulkDeleteMessages endpoint",
+            options: [
+                .string("channel_id", description: "Channel ID", required: true),
+                .string("message_ids", description: "Comma separated IDs", required: true)
+            ]
+        ) { interaction in
+            guard let channelId = interaction.option("channel_id")?.stringValue,
+                  let messageIdsRaw = interaction.option("message_ids")?.stringValue else {
+                try await interaction.respond("Missing arguments", ephemeral: true)
+                return
+            }
+            let ids = messageIdsRaw
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            guard !ids.isEmpty else {
+                try await interaction.respond("No valid message IDs provided.", ephemeral: true)
+                return
+            }
+            do {
+                try await bot.bulkDeleteMessages(channelId: channelId, messageIds: ids)
+                try await sendInteractionDump(
+                    interaction,
+                    title: "bulkDeleteMessages",
+                    value: BulkDeleteResult(channelId: channelId, messageIds: ids),
+                    ephemeral: false
+                )
+            } catch {
+                try await interaction.respond("bulkDeleteMessages failed: \(friendlyError(error))", ephemeral: true)
             }
         }
 
@@ -292,9 +731,37 @@ struct DiscordKitBotMain {
             do {
                 try await bot.deleteMessage(channelId: last.channelId, messageId: last.id)
                 await state.clearLastBotMessage()
-                try await interaction.respond("Deleted message \(last.id).", ephemeral: true)
+                try await sendInteractionDump(
+                    interaction,
+                    title: "deleteMessage",
+                    value: DeleteMessageResult(channelId: last.channelId, messageId: last.id),
+                    ephemeral: true
+                )
             } catch {
-                try await interaction.respond("deleteMessage failed: \(error)", ephemeral: true)
+                try await interaction.respond("deleteMessage failed: \(friendlyError(error))", ephemeral: true)
+            }
+        }
+
+        bot.slashCommand("followup_flow", description: "Test get/edit/delete followup endpoints") { interaction in
+            do {
+                try await interaction.defer_(ephemeral: true)
+                let followup = try await interaction.followUp("Created followup message for lifecycle test.")
+                await state.setLastFollowupMessage(followup)
+                let fetched = try await interaction.getFollowUp(messageId: followup.id)
+                let edited = try await interaction.editFollowUp(
+                    messageId: fetched.id,
+                    content: "Followup edited successfully."
+                )
+                try await interaction.deleteFollowUp(messageId: edited.id)
+                await state.clearLastFollowupMessage()
+                try await sendDeferredInteractionDump(
+                    interaction,
+                    title: "followup lifecycle",
+                    value: FollowupLifecycleResult(created: followup, fetched: fetched, edited: edited, deletedMessageId: edited.id),
+                    ephemeral: true
+                )
+            } catch {
+                _ = try? await interaction.editResponse("followup_flow failed: \(friendlyError(error))")
             }
         }
 
@@ -322,6 +789,46 @@ struct DiscordKitBotMain {
             )
         }
 
+        bot.slashCommand(
+            "set_status",
+            description: "Set bot presence status and activity",
+            options: [
+                .string(
+                    "status",
+                    description: "Presence status",
+                    required: true,
+                    choices: [
+                        CommandChoice(name: "online", value: "online"),
+                        CommandChoice(name: "idle", value: "idle"),
+                        CommandChoice(name: "dnd", value: "dnd"),
+                        CommandChoice(name: "invisible", value: "invisible"),
+                    ]
+                ),
+                .string("activity", description: "Activity name", required: false)
+            ]
+        ) { interaction in
+            guard let statusRaw = interaction.option("status")?.stringValue,
+                  let status = parsePresenceStatus(statusRaw) else {
+                try await interaction.respond("Invalid status value.", ephemeral: true)
+                return
+            }
+
+            let activityName = interaction.option("activity")?.stringValue
+            let activity = activityName.map { DiscordActivity(name: $0, type: .playing) }
+
+            do {
+                try await bot.setPresence(status: status, activity: activity)
+                try await sendInteractionDump(
+                    interaction,
+                    title: "setPresence",
+                    value: PresenceUpdateResult(status: status.rawValue, activityName: activity?.name),
+                    ephemeral: true
+                )
+            } catch {
+                try await interaction.respond("setPresence failed: \(friendlyError(error))", ephemeral: true)
+            }
+        }
+
         print("Starting DiscordKitBot...")
         try await bot.start()
     }
@@ -331,6 +838,147 @@ private extension String {
     var nonEmpty: String? {
         isEmpty ? nil : self
     }
+}
+
+private func parsePresenceStatus(_ raw: String) -> DiscordPresenceStatus? {
+    switch raw.lowercased() {
+    case "online":
+        return .online
+    case "idle":
+        return .idle
+    case "dnd":
+        return .dnd
+    case "invisible":
+        return .invisible
+    default:
+        return nil
+    }
+}
+
+private func friendlyError(_ error: Error) -> String {
+    if let localized = error as? LocalizedError, let message = localized.errorDescription, !message.isEmpty {
+        return message
+    }
+    return String(describing: error)
+}
+
+private struct EndpointCollectionDump<Item: Encodable>: Encodable {
+    let count: Int
+    let items: [Item]
+}
+
+private struct BulkDeleteResult: Encodable {
+    let channelId: String
+    let messageIds: [String]
+}
+
+private struct DeleteMessageResult: Encodable {
+    let channelId: String
+    let messageId: String
+}
+
+private struct PresenceUpdateResult: Encodable {
+    let status: String
+    let activityName: String?
+}
+
+private struct FollowupLifecycleResult: Encodable {
+    let created: Message
+    let fetched: Message
+    let edited: Message
+    let deletedMessageId: String
+}
+
+private func sendMessageDump<T: Encodable>(_ message: Message, title: String, value: T) async throws {
+    let chunks = renderEndpointDumpChunks(title: title, value: value)
+    for (index, chunk) in chunks.enumerated() {
+        if index == 0 {
+            _ = try await message.reply(chunk)
+        } else {
+            _ = try await message.respond(chunk)
+        }
+    }
+}
+
+private func sendInteractionDump<T: Encodable>(
+    _ interaction: Interaction,
+    title: String,
+    value: T,
+    ephemeral: Bool
+) async throws {
+    let chunks = renderEndpointDumpChunks(title: title, value: value)
+    guard let first = chunks.first else { return }
+    try await interaction.respond(first, ephemeral: ephemeral)
+    for chunk in chunks.dropFirst() {
+        _ = try await interaction.followUp(chunk, ephemeral: ephemeral)
+    }
+}
+
+private func sendDeferredInteractionDump<T: Encodable>(
+    _ interaction: Interaction,
+    title: String,
+    value: T,
+    ephemeral: Bool
+) async throws {
+    let chunks = renderEndpointDumpChunks(title: title, value: value)
+    guard let first = chunks.first else { return }
+    _ = try await interaction.editResponse(first)
+    for chunk in chunks.dropFirst() {
+        _ = try await interaction.followUp(chunk, ephemeral: ephemeral)
+    }
+}
+
+private func renderEndpointDumpChunks<T: Encodable>(title: String, value: T) -> [String] {
+    let json = encodePrettyJSON(value) ?? #"{"error":"failed to encode payload"}"#
+    let parts = splitForDiscord(json, limit: 1500)
+    if parts.count == 1 {
+        return ["\(title)\n```json\n\(json)\n```"]
+    }
+    return parts.enumerated().map { index, part in
+        "\(title) (\(index + 1)/\(parts.count))\n```json\n\(part)\n```"
+    }
+}
+
+private func encodePrettyJSON<T: Encodable>(_ value: T) -> String? {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    encoder.keyEncodingStrategy = .convertToSnakeCase
+    guard let data = try? encoder.encode(value) else { return nil }
+    return String(data: data, encoding: .utf8)
+}
+
+private func splitForDiscord(_ text: String, limit: Int = 1900) -> [String] {
+    guard text.count > limit else { return [text] }
+
+    var chunks: [String] = []
+    var current = ""
+
+    for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let lineWithBreak = line + "\n"
+        if current.count + lineWithBreak.count > limit, !current.isEmpty {
+            chunks.append(current)
+            current = ""
+        }
+
+        if lineWithBreak.count > limit {
+            let raw = String(lineWithBreak)
+            var start = raw.startIndex
+            while start < raw.endIndex {
+                let end = raw.index(start, offsetBy: limit, limitedBy: raw.endIndex) ?? raw.endIndex
+                chunks.append(String(raw[start..<end]))
+                start = end
+            }
+            continue
+        }
+
+        current += lineWithBreak
+    }
+
+    if !current.isEmpty {
+        chunks.append(current)
+    }
+
+    return chunks
 }
 
 private func componentV2DemoData() -> (components: [ComponentV2Node], attachments: [DiscordFileUpload]) {
@@ -372,7 +1020,7 @@ private func componentV2DemoData() -> (components: [ComponentV2Node], attachment
                             accessory: .thumbnail(
                                 ComponentV2Thumbnail(
                                     media: ComponentV2Media(
-                                        url: "https://images.unsplash.com/photo-1518770660439-4636190af475?w=512"
+                                        url: DemoImageURLs.swiftOrange
                                     )
                                 )
                             )
@@ -457,12 +1105,12 @@ private func componentV2DemoData() -> (components: [ComponentV2Node], attachment
                             items: [
                                 ComponentV2MediaGalleryItem(
                                     media: ComponentV2UnfurledMediaItem(
-                                        url: "https://images.unsplash.com/photo-1515879218367-8466d910aaa4?w=1200"
+                                        url: DemoImageURLs.swift25
                                     )
                                 ),
                                 ComponentV2MediaGalleryItem(
                                     media: ComponentV2UnfurledMediaItem(
-                                        url: "https://images.unsplash.com/photo-1519389950473-47ba0277781c?w=1200"
+                                        url: DemoImageURLs.swiftGreen
                                     )
                                 ),
                             ]

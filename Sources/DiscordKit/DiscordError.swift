@@ -5,6 +5,10 @@ public enum DiscordError: Error, LocalizedError {
     case rateLimited(retryAfter: Double)
     case gatewayDisconnected(code: Int?, reason: String?)
     case decodingFailed(type: String, underlying: Error)
+    case missingPermissions(endpoint: String)
+    case resourceNotFound(endpoint: String)
+    case validationFailed(message: String)
+    case invalidRequest(message: String)
     case httpError(statusCode: Int, body: String)
     case websocketError(underlying: Error)
     case connectionFailed(reason: String)
@@ -21,6 +25,14 @@ public enum DiscordError: Error, LocalizedError {
             return "Gateway disconnected. Code: \(code.map(String.init) ?? "none"), Reason: \(reason ?? "none")"
         case .decodingFailed(let type, let underlying):
             return "Failed to decode '\(type)': \(underlying.localizedDescription)"
+        case .missingPermissions(let endpoint):
+            return "Missing permissions for endpoint '\(endpoint)'. Check your bot role permissions and channel/guild access."
+        case .resourceNotFound(let endpoint):
+            return "Resource not found at '\(endpoint)'. Verify the IDs (guild/channel/message/user) are correct."
+        case .validationFailed(let message):
+            return "Discord rejected the request data: \(message)"
+        case .invalidRequest(let message):
+            return "Invalid Discord API request: \(message)"
         case .httpError(let code, let body):
             return "HTTP \(code): \(body)"
         case .websocketError(let underlying):

@@ -57,6 +57,15 @@ actor GatewayClient {
         state = .disconnected
     }
 
+    func updatePresence(_ update: DiscordPresenceUpdate) async throws {
+        guard state == .connected || state == .resuming else {
+            throw DiscordError.gatewayDisconnected(code: nil, reason: "Cannot update presence before the gateway is connected.")
+        }
+        let payload = PresenceUpdatePayload(d: update)
+        try await sendJSONThrowing(payload)
+        logger.info("Updated bot presence to \(update.status.rawValue)")
+    }
+
 
     private func openWebSocket(to urlString: String) async throws {
         guard let url = URL(string: urlString) else {
@@ -262,11 +271,18 @@ actor GatewayClient {
 
     private func sendJSON<T: Encodable>(_ value: T) async {
         do {
-            let data = try JSONCoder.encode(value)
-            let text = String(data: data, encoding: .utf8) ?? ""
-            try await webSocketTask?.send(.string(text))
+            try await sendJSONThrowing(value)
         } catch {
             logger.error("Failed to send gateway payload: \(error)")
         }
+    }
+
+    private func sendJSONThrowing<T: Encodable>(_ value: T) async throws {
+        let data = try JSONCoder.encode(value)
+        let text = String(data: data, encoding: .utf8) ?? ""
+        guard let task = webSocketTask else {
+            throw DiscordError.gatewayDisconnected(code: nil, reason: "Gateway websocket is not available.")
+        }
+        try await task.send(.string(text))
     }
 }

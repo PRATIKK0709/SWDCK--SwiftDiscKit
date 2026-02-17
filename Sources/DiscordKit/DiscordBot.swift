@@ -100,8 +100,41 @@ public final class DiscordBot: Sendable {
         try await rest.getChannel(channelId: channelId)
     }
 
+    public func getGuild(_ guildId: String) async throws -> Guild {
+        try await rest.getGuild(guildId: guildId)
+    }
+
+    public func getGuildMember(guildId: String, userId: String) async throws -> GuildMember {
+        try await rest.getGuildMember(guildId: guildId, userId: userId)
+    }
+
+    public func getGuildRoles(_ guildId: String) async throws -> [GuildRole] {
+        try await rest.getGuildRoles(guildId: guildId)
+    }
+
+    public func getUser(_ userId: String) async throws -> DiscordUser {
+        try await rest.getUser(userId: userId)
+    }
+
+    public func getMessage(channelId: String, messageId: String) async throws -> Message {
+        try await rest.getMessage(channelId: channelId, messageId: messageId)
+    }
+
+    public func getMessages(channelId: String, query: MessageHistoryQuery = MessageHistoryQuery()) async throws -> [Message] {
+        try await rest.getMessages(channelId: channelId, query: query)
+    }
+
+    @discardableResult
+    public func editMessage(channelId: String, messageId: String, content: String) async throws -> Message {
+        try await rest.editMessage(channelId: channelId, messageId: messageId, content: content)
+    }
+
     public func deleteMessage(channelId: String, messageId: String) async throws {
         try await rest.deleteMessage(channelId: channelId, messageId: messageId)
+    }
+
+    public func bulkDeleteMessages(channelId: String, messageIds: [String]) async throws {
+        try await rest.bulkDeleteMessages(channelId: channelId, messageIds: messageIds)
     }
 
     @discardableResult
@@ -187,6 +220,20 @@ public final class DiscordBot: Sendable {
     public func stop() async {
         logger.info("DiscordKit shutting down...")
         await gateway.disconnect()
+    }
+
+    public func setPresence(
+        status: DiscordPresenceStatus,
+        activity: DiscordActivity? = nil,
+        afk: Bool = false
+    ) async throws {
+        let update = DiscordPresenceUpdate(
+            since: nil,
+            activities: activity.map { [$0] } ?? [],
+            status: status,
+            afk: afk
+        )
+        try await gateway.updatePresence(update)
     }
 
 
