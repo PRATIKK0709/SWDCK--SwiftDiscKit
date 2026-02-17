@@ -740,6 +740,7 @@ public final class RESTClient: Sendable {
         components: [ComponentV2Node],
         messageReference: MessageReference? = nil
     ) async throws -> Message {
+        try validateComponentLimit(components)
         let body = SendComponentsV2MessageBody(
             flags: DiscordMessageFlags.isComponentsV2,
             components: components,
@@ -763,6 +764,7 @@ public final class RESTClient: Sendable {
         attachments: [DiscordFileUpload],
         messageReference: MessageReference? = nil
     ) async throws -> Message {
+        try validateComponentLimit(components)
         guard let url = URL(string: Routes.messages(channelId)) else {
             throw DiscordError.connectionFailed(reason: "Invalid URL: \(Routes.messages(channelId))")
         }
@@ -1415,6 +1417,62 @@ private extension RESTClient {
     func encodeEmojiForPath(_ emoji: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
         return emoji.addingPercentEncoding(withAllowedCharacters: allowed) ?? emoji
+    }
+
+    func validateComponentLimit(_ components: [ComponentV2Node]) throws {
+        let total = components.reduce(into: 0) { partial, node in
+            partial += componentCount(node)
+        }
+        guard total <= 40 else {
+            throw DiscordError.invalidRequest(
+                message: "Components V2 payload has \(total) components. Discord limit is 40. Reduce panel elements or split into multiple messages."
+            )
+        }
+    }
+
+    func componentCount(_ node: ComponentV2Node) -> Int {
+        switch node {
+        case .textDisplay:
+            return 1
+        case .actionRow(let row):
+            return 1 + row.components.reduce(into: 0) { partial, component in
+                partial += componentCount(component)
+            }
+        case .section(let section):
+            var total = 1 + section.components.reduce(into: 0) { partial, nested in
+                partial += componentCount(nested)
+            }
+            if let accessory = section.accessory {
+                total += componentCount(accessory)
+            }
+            return total
+        case .thumbnail:
+            return 1
+        case .mediaGallery:
+            return 1
+        case .file:
+            return 1
+        case .separator:
+            return 1
+        case .container(let container):
+            return 1 + container.components.reduce(into: 0) { partial, nested in
+                partial += componentCount(nested)
+            }
+        }
+    }
+
+    func componentCount(_ component: ComponentV2ActionRowComponent) -> Int {
+        switch component {
+        case .button, .stringSelect, .userSelect, .roleSelect, .mentionableSelect, .channelSelect:
+            return 1
+        }
+    }
+
+    func componentCount(_ accessory: ComponentV2Accessory) -> Int {
+        switch accessory {
+        case .button, .thumbnail:
+            return 1
+        }
     }
 }
 

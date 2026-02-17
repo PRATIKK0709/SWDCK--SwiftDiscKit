@@ -1404,7 +1404,6 @@ private func apiTestPanelData() -> [ComponentV2Node] {
             placeholder: "Run thread + channel lifecycle test",
             endpoints: panelThreadLifecycleEndpoints()
         ),
-        .separator(ComponentV2Separator(divider: true, spacing: 1)),
         .textDisplay(ComponentV2TextDisplay("### Webhooks + Roles")),
         .textDisplay(ComponentV2TextDisplay("Webhook lifecycle, webhook messages, and guild role lifecycle endpoints.")),
         panelSelect(
