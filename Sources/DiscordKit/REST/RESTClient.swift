@@ -620,7 +620,72 @@ private struct DiscordAPIErrorPayload: Decodable {
 public struct ApplicationCommand: Codable, Sendable, Identifiable {
     public let id: String
     public let applicationId: String
+    public let guildId: String?
     public let name: String
+    public let nameLocalizations: [String: String]?
     public let description: String
+    public let descriptionLocalizations: [String: String]?
+    public let type: Int?
+    public let options: [ApplicationCommandOption]?
+    public let defaultMemberPermissions: String?
+    public let defaultPermission: Bool?
+    public let dmPermission: Bool?
+    public let nsfw: Bool?
+    public let integrationTypes: [Int]?
+    public let contexts: [Int]?
+    public let handler: Int?
     public let version: String
+}
+
+public struct ApplicationCommandOption: Codable, Sendable {
+    public let type: Int
+    public let name: String
+    public let nameLocalizations: [String: String]?
+    public let description: String
+    public let descriptionLocalizations: [String: String]?
+    public let required: Bool?
+    public let choices: [ApplicationCommandChoice]?
+    public let options: [ApplicationCommandOption]?
+    public let channelTypes: [Int]?
+    public let minValue: Double?
+    public let maxValue: Double?
+    public let minLength: Int?
+    public let maxLength: Int?
+    public let autocomplete: Bool?
+}
+
+public struct ApplicationCommandChoice: Codable, Sendable {
+    public let name: String
+    public let value: ApplicationCommandChoiceValue
+}
+
+public enum ApplicationCommandChoiceValue: Codable, Sendable {
+    case string(String)
+    case int(Int)
+    case double(Double)
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let string = try? container.decode(String.self) {
+            self = .string(string)
+            return
+        }
+        if let int = try? container.decode(Int.self) {
+            self = .int(int)
+            return
+        }
+        self = .double(try container.decode(Double.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .int(let value):
+            try container.encode(value)
+        case .double(let value):
+            try container.encode(value)
+        }
+    }
 }

@@ -24,6 +24,37 @@ final class JSONCoderTests: XCTestCase {
         XCTAssertEqual(user.tag, "TestUser")    // discriminator == "0" → no suffix
     }
 
+    func testExtendedUserDecoding() throws {
+        let json = """
+        {
+            "id": "123456789",
+            "username": "TestUser",
+            "discriminator": "0",
+            "global_name": "Test",
+            "avatar": "avatar_hash",
+            "banner": "banner_hash",
+            "accent_color": 16711680,
+            "locale": "en-US",
+            "flags": 64,
+            "public_flags": 128,
+            "premium_type": 2,
+            "avatar_decoration_data": {
+                "asset": "asset_hash",
+                "sku_id": "12345"
+            }
+        }
+        """.data(using: .utf8)!
+
+        let user = try JSONCoder.decode(DiscordUser.self, from: json)
+        XCTAssertEqual(user.banner, "banner_hash")
+        XCTAssertEqual(user.accentColor, 16711680)
+        XCTAssertEqual(user.locale, "en-US")
+        XCTAssertEqual(user.flags, 64)
+        XCTAssertEqual(user.publicFlags, 128)
+        XCTAssertEqual(user.premiumType, 2)
+        XCTAssertEqual(user.avatarDecorationData?.skuId, "12345")
+    }
+
     func testMessageDecoding() throws {
         let json = """
         {
@@ -55,6 +86,71 @@ final class JSONCoderTests: XCTestCase {
         XCTAssertEqual(msg.channelId, "222")
         XCTAssertEqual(msg.content, "Hello, world!")
         XCTAssertEqual(msg.type, .default)
+    }
+
+    func testExtendedMessageDecoding() throws {
+        let json = """
+        {
+            "id": "111",
+            "channel_id": "222",
+            "guild_id": "333",
+            "author": {
+                "id": "444",
+                "username": "Author",
+                "discriminator": "1234",
+                "global_name": null,
+                "avatar": null
+            },
+            "content": "Hello, world!",
+            "timestamp": "2024-01-01T00:00:00.000Z",
+            "edited_timestamp": null,
+            "tts": false,
+            "mention_everyone": false,
+            "mentions": [],
+            "mention_roles": ["999"],
+            "mention_channels": [
+                { "id": "777", "guild_id": "333", "type": 0, "name": "general" }
+            ],
+            "attachments": [],
+            "embeds": [],
+            "reactions": [
+                {
+                    "count": 3,
+                    "me": false,
+                    "emoji": { "id": null, "name": "🔥", "animated": false }
+                }
+            ],
+            "nonce": "n-1",
+            "pinned": false,
+            "webhook_id": "555",
+            "type": 0,
+            "application_id": "666",
+            "message_reference": {
+                "message_id": "110",
+                "channel_id": "222",
+                "guild_id": "333"
+            },
+            "flags": 64,
+            "components": [
+                { "type": 1 }
+            ],
+            "sticker_items": [
+                { "id": "888", "name": "wave", "format_type": 1 }
+            ],
+            "position": 5
+        }
+        """.data(using: .utf8)!
+
+        let msg = try JSONCoder.decode(Message.self, from: json)
+        XCTAssertEqual(msg.mentionRoles, ["999"])
+        XCTAssertEqual(msg.mentionChannels?.first?.id, "777")
+        XCTAssertEqual(msg.reactions?.first?.count, 3)
+        XCTAssertEqual(msg.webhookId, "555")
+        XCTAssertEqual(msg.applicationId, "666")
+        XCTAssertEqual(msg.messageReference?.messageId, "110")
+        XCTAssertEqual(msg.flags, 64)
+        XCTAssertEqual(msg.stickerItems?.first?.name, "wave")
+        XCTAssertEqual(msg.position, 5)
     }
 
     func testGatewayPayloadDecoding() throws {
@@ -110,6 +206,106 @@ final class JSONCoderTests: XCTestCase {
         let boolJSON = "true".data(using: .utf8)!
         let boolVal = try JSONCoder.decode(InteractionOptionValue.self, from: boolJSON)
         XCTAssertEqual(boolVal.boolValue, true)
+    }
+
+    func testExtendedChannelDecoding() throws {
+        let json = """
+        {
+            "id": "10",
+            "type": 0,
+            "guild_id": "99",
+            "name": "general",
+            "topic": "topic",
+            "position": 1,
+            "permission_overwrites": [
+                { "id": "1", "type": 0, "allow": "0", "deny": "1024" }
+            ],
+            "rate_limit_per_user": 2,
+            "flags": 16,
+            "available_tags": [
+                { "id": "100", "name": "news", "moderated": false }
+            ]
+        }
+        """.data(using: .utf8)!
+
+        let channel = try JSONCoder.decode(Channel.self, from: json)
+        XCTAssertEqual(channel.guildId, "99")
+        XCTAssertEqual(channel.permissionOverwrites?.count, 1)
+        XCTAssertEqual(channel.flags, 16)
+        XCTAssertEqual(channel.availableTags?.first?.name, "news")
+    }
+
+    func testExtendedGuildDecoding() throws {
+        let json = """
+        {
+            "id": "200",
+            "name": "My Guild",
+            "icon": null,
+            "owner_id": "1",
+            "description": "Guild description",
+            "preferred_locale": "en-US",
+            "features": ["COMMUNITY"],
+            "roles": [
+                {
+                    "id": "1",
+                    "name": "@everyone",
+                    "color": 0,
+                    "hoist": false,
+                    "position": 0,
+                    "permissions": "104324161",
+                    "managed": false,
+                    "mentionable": false
+                }
+            ],
+            "premium_tier": 2,
+            "approximate_member_count": 120,
+            "approximate_presence_count": 45
+        }
+        """.data(using: .utf8)!
+
+        let guild = try JSONCoder.decode(Guild.self, from: json)
+        XCTAssertEqual(guild.ownerId, "1")
+        XCTAssertEqual(guild.preferredLocale, "en-US")
+        XCTAssertEqual(guild.features, ["COMMUNITY"])
+        XCTAssertEqual(guild.roles?.first?.id, "1")
+        XCTAssertEqual(guild.premiumTier, 2)
+        XCTAssertEqual(guild.approximateMemberCount, 120)
+    }
+
+    func testExtendedGuildMemberDecoding() throws {
+        let json = """
+        {
+            "user": {
+                "id": "444",
+                "username": "Author",
+                "discriminator": "1234",
+                "global_name": null,
+                "avatar": null
+            },
+            "nick": "Nick",
+            "roles": ["11", "22"],
+            "joined_at": "2024-01-01T00:00:00.000Z",
+            "premium_since": "2024-01-02T00:00:00.000Z",
+            "deaf": false,
+            "mute": true,
+            "flags": 4,
+            "pending": false,
+            "permissions": "274877906944",
+            "unusual_dm_activity_until": null,
+            "avatar_decoration_data": {
+                "asset": "asset_hash",
+                "sku_id": "12345"
+            }
+        }
+        """.data(using: .utf8)!
+
+        let member = try JSONCoder.decode(GuildMember.self, from: json)
+        XCTAssertEqual(member.nick, "Nick")
+        XCTAssertEqual(member.roles.count, 2)
+        XCTAssertEqual(member.premiumSince, "2024-01-02T00:00:00.000Z")
+        XCTAssertEqual(member.flags, 4)
+        XCTAssertEqual(member.permissions, "274877906944")
+        XCTAssertEqual(member.avatarDecorationData?.skuId, "12345")
     }
 }
 
@@ -225,6 +421,47 @@ final class SlashCommandDefinitionTests: XCTestCase {
         XCTAssertEqual(options?[0]["name"] as? String, "name")
         XCTAssertEqual(options?[0]["type"] as? Int, 3)  // STRING
         XCTAssertEqual(options?[0]["required"] as? Bool, true)
+    }
+}
+
+final class ApplicationCommandModelTests: XCTestCase {
+
+    func testApplicationCommandDecoding() throws {
+        let json = """
+        {
+            "id": "1000",
+            "application_id": "2000",
+            "guild_id": "3000",
+            "name": "ping",
+            "description": "Ping command",
+            "type": 1,
+            "default_member_permissions": "0",
+            "dm_permission": true,
+            "nsfw": false,
+            "integration_types": [0],
+            "contexts": [0, 1],
+            "version": "4000",
+            "options": [
+                {
+                    "type": 3,
+                    "name": "text",
+                    "description": "Text option",
+                    "required": false,
+                    "autocomplete": true,
+                    "min_length": 1,
+                    "max_length": 100
+                }
+            ]
+        }
+        """.data(using: .utf8)!
+
+        let command = try JSONCoder.decode(ApplicationCommand.self, from: json)
+        XCTAssertEqual(command.id, "1000")
+        XCTAssertEqual(command.guildId, "3000")
+        XCTAssertEqual(command.options?.first?.name, "text")
+        XCTAssertEqual(command.options?.first?.autocomplete, true)
+        XCTAssertEqual(command.options?.first?.minLength, 1)
+        XCTAssertEqual(command.contexts, [0, 1])
     }
 }
 
