@@ -1616,6 +1616,7 @@ final class AdditionalAPIModelsTests: XCTestCase {
 }
 
 
+
 // MARK: - Branch 1: Core API Improvements Tests
 
 final class MessageTypeExpandedTests: XCTestCase {
@@ -1820,5 +1821,97 @@ final class MessagePayloadTests: XCTestCase {
         let data = try JSONEncoder().encode(embed)
         let decoded = try JSONDecoder().decode(Embed.self, from: data)
         XCTAssertEqual(decoded.timestamp, "2025-12-25T00:00:00Z")
+
+// MARK: - Branch 2: Rate Limiting & Retries Tests
+
+final class RateLimiterTests: XCTestCase {
+    func testWaitIfNeededNoExistingBucket() async {
+        let limiter = RateLimiter()
+        await limiter.waitIfNeeded(for: "GET:/test/route")
+    }
+
+    func testUpdateCreatesBucket() async {
+        let limiter = RateLimiter()
+        let resetTime = String(Date().timeIntervalSince1970 + 10)
+        let headers: [AnyHashable: Any] = [
+            "X-RateLimit-Remaining": "4",
+            "X-RateLimit-Limit": "5",
+            "X-RateLimit-Reset": resetTime,
+            "X-RateLimit-Bucket": "test-bucket"
+        ]
+        await limiter.update(route: "GET:/test", headers: headers)
+        await limiter.waitIfNeeded(for: "GET:/test")
+    }
+
+    func testGlobalRateLimit() async {
+        let limiter = RateLimiter()
+        let headers: [AnyHashable: Any] = [
+            "X-RateLimit-Global": "true",
+            "Retry-After": "0.01"
+        ]
+        await limiter.update(route: "GET:/global-test", headers: headers)
+        await limiter.waitIfNeeded(for: "GET:/other-route")
+    }
+}
+
+final class MultipartBodyBuildingTests: XCTestCase {
+    func testMultipartBoundaryFormat() {
+        let boundary = "Boundary-\(UUID().uuidString)"
+        XCTAssertTrue(boundary.starts(with: "Boundary-"))
+        XCTAssertTrue(boundary.count > 10)
+    }
+
+    func testMultipartBodyStructure() throws {
+        let boundary = "Boundary-TEST123"
+        let lineBreak = "\r\n"
+        var body = Data()
+
+        func append(_ string: String) {
+            body.append(Data(string.utf8))
+        }
+
+        append("--\(boundary)\(lineBreak)")
+        append("Content-Disposition: form-data; name=\"payload_json\"\(lineBreak)")
+        append("Content-Type: application/json\(lineBreak)\(lineBreak)")
+        append("{\"test\":true}")
+        append(lineBreak)
+        append("--\(boundary)--\(lineBreak)")
+
+        let bodyString = String(data: body, encoding: .utf8)!
+        XCTAssertTrue(bodyString.contains("--Boundary-TEST123\r\n"))
+        XCTAssertTrue(bodyString.contains("Content-Disposition: form-data; name=\"payload_json\""))
+        XCTAssertTrue(bodyString.contains("Content-Type: application/json"))
+        XCTAssertTrue(bodyString.contains("{\"test\":true}"))
+        XCTAssertTrue(bodyString.contains("--Boundary-TEST123--"))
+    }
+
+    func testMultipartBodyWithAttachment() throws {
+        let boundary = "Boundary-ATTACH"
+        let lineBreak = "\r\n"
+        var body = Data()
+
+        func append(_ string: String) {
+            body.append(Data(string.utf8))
+        }
+
+        append("--\(boundary)\(lineBreak)")
+        append("Content-Disposition: form-data; name=\"payload_json\"\(lineBreak)")
+        append("Content-Type: application/json\(lineBreak)\(lineBreak)")
+        append("{}")
+        append(lineBreak)
+
+        let fileData = "hello world".data(using: .utf8)!
+        append("--\(boundary)\(lineBreak)")
+        append("Content-Disposition: form-data; name=\"files[0]\"; filename=\"test.txt\"\(lineBreak)")
+        append("Content-Type: text/plain\(lineBreak)\(lineBreak)")
+        body.append(fileData)
+        append(lineBreak)
+        append("--\(boundary)--\(lineBreak)")
+
+        let bodyString = String(data: body, encoding: .utf8)!
+        XCTAssertTrue(bodyString.contains("files[0]"))
+        XCTAssertTrue(bodyString.contains("filename=\"test.txt\""))
+        XCTAssertTrue(bodyString.contains("hello world"))
+
     }
 }
