@@ -42,10 +42,9 @@ actor GatewayClient {
     }
 
 
-    func connect() async throws {
+    func connect(with gatewayURL: String) async throws {
         state = .connecting
         reconnectAttempts = 0
-        let gatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
         try await openWebSocket(to: gatewayURL)
     }
 

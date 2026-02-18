@@ -1455,7 +1455,14 @@ public final class DiscordBot: Sendable {
             }
         )
 
-        try await gateway.connect()
+        // Fetch the correct gateway URL and recommended shard count
+        let gatewayBot = try await rest.getGatewayBot()
+        logger.info("Gateway recommendation: \(gatewayBot.shards) shards, url: \(gatewayBot.url)")
+        
+        // Append query params for API version and encoding
+        let url = "\(gatewayBot.url)?v=10&encoding=json"
+        
+        try await gateway.connect(with: url)
     }
 
     public func stop() async {
