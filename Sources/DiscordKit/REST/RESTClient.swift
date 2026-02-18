@@ -1154,6 +1154,65 @@ public final class RESTClient: Sendable {
         )
     }
 
+    // MARK: - Sticker CRUD
+
+    func getGuildStickers(guildId: String) async throws -> [Sticker] {
+        try await request(method: "GET", url: Routes.guildStickers(guildId), decodeAs: [Sticker].self)
+    }
+
+    func getGuildSticker(guildId: String, stickerId: String) async throws -> Sticker {
+        try await request(
+            method: "GET",
+            url: Routes.guildSticker(guildId, stickerId: stickerId),
+            decodeAs: Sticker.self
+        )
+    }
+
+    func createGuildSticker(
+        guildId: String,
+        sticker: CreateGuildSticker,
+        auditLogReason: String? = nil
+    ) async throws -> Sticker {
+        try await request(
+            method: "POST",
+            url: Routes.guildStickers(guildId),
+            body: sticker,
+            headers: auditLogHeaders(reason: auditLogReason),
+            decodeAs: Sticker.self
+        )
+    }
+
+    func modifyGuildSticker(
+        guildId: String,
+        stickerId: String,
+        modify: ModifyGuildSticker,
+        auditLogReason: String? = nil
+    ) async throws -> Sticker {
+        try await request(
+            method: "PATCH",
+            url: Routes.guildSticker(guildId, stickerId: stickerId),
+            body: modify,
+            headers: auditLogHeaders(reason: auditLogReason),
+            decodeAs: Sticker.self
+        )
+    }
+
+    func deleteGuildSticker(guildId: String, stickerId: String, auditLogReason: String? = nil) async throws {
+        try await requestVoid(
+            method: "DELETE",
+            url: Routes.guildSticker(guildId, stickerId: stickerId),
+            headers: auditLogHeaders(reason: auditLogReason)
+        )
+    }
+
+    func getSticker(stickerId: String) async throws -> Sticker {
+        try await request(method: "GET", url: Routes.sticker(stickerId), decodeAs: Sticker.self)
+    }
+
+    func listStickerPacks() async throws -> StickerPacksResponse {
+        try await request(method: "GET", url: Routes.stickerPacks, decodeAs: StickerPacksResponse.self)
+    }
+
     func getGuildTemplate(code: String) async throws -> GuildTemplate {
         try await request(method: "GET", url: Routes.guildTemplate(code: code), decodeAs: GuildTemplate.self)
     }
