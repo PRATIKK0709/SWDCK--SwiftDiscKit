@@ -88,6 +88,21 @@ public final class DiscordBot: Sendable {
         try await rest.sendMessage(channelId: channelId, content: content)
     }
 
+    @discardableResult
+    public func sendMessage(to channelId: String, payload: SendMessagePayload) async throws -> Message {
+        try await rest.sendMessage(channelId: channelId, payload: payload)
+    }
+
+    @discardableResult
+    public func editMessage(channelId: String, messageId: String, content: String) async throws -> Message {
+        try await rest.editMessage(channelId: channelId, messageId: messageId, content: content)
+    }
+
+    @discardableResult
+    public func editMessage(channelId: String, messageId: String, payload: EditMessagePayload) async throws -> Message {
+        try await rest.editMessage(channelId: channelId, messageId: messageId, payload: payload)
+    }
+
     public func getCurrentUser() async throws -> DiscordUser {
         try await rest.getCurrentUser()
     }
@@ -1206,11 +1221,6 @@ public final class DiscordBot: Sendable {
 
     public func getMessages(channelId: String, query: MessageHistoryQuery = MessageHistoryQuery()) async throws -> [Message] {
         try await rest.getMessages(channelId: channelId, query: query)
-    }
-
-    @discardableResult
-    public func editMessage(channelId: String, messageId: String, content: String) async throws -> Message {
-        try await rest.editMessage(channelId: channelId, messageId: messageId, content: content)
     }
 
     public func deleteMessage(channelId: String, messageId: String) async throws {

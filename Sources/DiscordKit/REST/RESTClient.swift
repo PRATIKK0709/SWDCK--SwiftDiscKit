@@ -1593,6 +1593,29 @@ public final class RESTClient: Sendable {
     }
 
     @discardableResult
+    func sendMessage(
+        channelId: String,
+        payload: SendMessagePayload
+    ) async throws -> Message {
+        let body = RichSendMessageBody(
+            content: payload.content,
+            embeds: payload.embeds,
+            allowedMentions: payload.allowedMentions,
+            messageReference: payload.messageReference,
+            stickerIds: payload.stickerIds,
+            flags: payload.flags
+        )
+        var msg = try await request(
+            method: "POST",
+            url: Routes.messages(channelId),
+            body: body,
+            decodeAs: Message.self
+        )
+        msg._rest = self
+        return msg
+    }
+
+    @discardableResult
     func executeGitHubWebhook(
         webhookId: String,
         token: String,
@@ -1629,6 +1652,28 @@ public final class RESTClient: Sendable {
     @discardableResult
     func editMessage(channelId: String, messageId: String, content: String) async throws -> Message {
         let body = EditMessageBody(content: content)
+        var message = try await request(
+            method: "PATCH",
+            url: Routes.message(channelId, messageId: messageId),
+            body: body,
+            decodeAs: Message.self
+        )
+        message._rest = self
+        return message
+    }
+
+    @discardableResult
+    func editMessage(
+        channelId: String,
+        messageId: String,
+        payload: EditMessagePayload
+    ) async throws -> Message {
+        let body = RichEditMessageBody(
+            content: payload.content,
+            embeds: payload.embeds,
+            allowedMentions: payload.allowedMentions,
+            flags: payload.flags
+        )
         var message = try await request(
             method: "PATCH",
             url: Routes.message(channelId, messageId: messageId),
@@ -2594,6 +2639,15 @@ private struct SendMessageBody: Encodable {
     let messageReference: MessageReference?
 }
 
+private struct RichSendMessageBody: Encodable {
+    let content: String?
+    let embeds: [Embed]?
+    let allowedMentions: AllowedMentions?
+    let messageReference: MessageReference?
+    let stickerIds: [String]?
+    let flags: Int?
+}
+
 private struct SendComponentsV2MessageBody: Encodable {
     let flags: Int
     let components: [ComponentV2Node]
@@ -2613,6 +2667,13 @@ private struct EditInteractionBody: Encodable {
 
 private struct EditMessageBody: Encodable {
     let content: String
+}
+
+private struct RichEditMessageBody: Encodable {
+    let content: String?
+    let embeds: [Embed]?
+    let allowedMentions: AllowedMentions?
+    let flags: Int?
 }
 
 private struct BulkDeleteMessagesBody: Encodable {
