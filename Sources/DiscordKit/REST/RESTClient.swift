@@ -8,8 +8,7 @@ public final class RESTClient: Sendable {
     private let rateLimiter: RateLimiter
     private let maxRetries = 3
 
-    private let cacheLock = NSLock()
-    private var _cachedApplicationId: String?
+    private let applicationIdCache = ApplicationIDCache()
 
     public init(token: String, authPrefix: String = "Bot") {
         self.token = token
@@ -66,9 +65,7 @@ public final class RESTClient: Sendable {
             request.httpBody = try JSONCoder.encode(body)
         }
 
-        // Normalize bucket key: replace numeric IDs with :id to avoid fragmentation
-        // e.g. POST:/channels/123/messages -> POST:/channels/:id/messages
-        let normalizedPath = url.path.replacingOccurrences(of: #"/\\d+"#, with: ":id", options: .regularExpression)
+        let normalizedPath = normalizedRateLimitPath(from: url.path)
         let routeKey = "\(method):\(normalizedPath)"
 
         for attempt in 1...maxRetries {
@@ -182,7 +179,7 @@ public final class RESTClient: Sendable {
             request.setValue(value, forHTTPHeaderField: key)
         }
 
-        let normalizedPath = url.path.replacingOccurrences(of: #"/\\d+"#, with: ":id", options: .regularExpression)
+        let normalizedPath = normalizedRateLimitPath(from: url.path)
         let routeKey = "\(method):\(normalizedPath)"
 
         for attempt in 1...maxRetries {
@@ -1932,21 +1929,17 @@ public final class RESTClient: Sendable {
 
 
     func getApplicationId() async throws -> String {
-        cacheLock.lock()
-        if let cached = _cachedApplicationId {
-            cacheLock.unlock()
+        if let cached = await applicationIdCache.get() {
             return cached
         }
-        cacheLock.unlock()
-
         let user = try await getCurrentUser()
         let appId = user.id
-
-        cacheLock.lock()
-        _cachedApplicationId = appId
-        cacheLock.unlock()
-        
+        await applicationIdCache.set(appId)
         return appId
+    }
+
+    func normalizedRateLimitPath(from path: String) -> String {
+        path.replacingOccurrences(of: #"/\d+"#, with: "/:id", options: .regularExpression)
     }
 
     func deleteInvite(code: String, auditLogReason: String? = nil) async throws -> Invite {
@@ -2772,6 +2765,18 @@ private struct RateLimitResponse: Decodable {
 
 private struct DiscordAPIErrorPayload: Decodable {
     let message: String?
+}
+
+private actor ApplicationIDCache {
+    private var value: String?
+
+    func get() -> String? {
+        value
+    }
+
+    func set(_ id: String) {
+        value = id
+    }
 }
 
 
